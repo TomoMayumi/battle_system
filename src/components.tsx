@@ -6,6 +6,10 @@ import {
   ChevronRight,
   Download,
   Gamepad2,
+  ClipboardPaste,
+  List,
+  Plus,
+  Square,
   Pause,
   Play,
   Save,
@@ -17,6 +21,13 @@ import {
 import {
   applyCommand,
   canFinish,
+  canFinishEarly,
+  membersFromText,
+  namesFromText,
+  plannedGamesFor,
+  MIN_MEMBERS,
+  MAX_MEMBERS,
+  MAX_ROUNDS,
   csv,
   currentRound,
   parseEvent,
@@ -109,8 +120,8 @@ export function Ranking({
           <tr>
             <th>順位</th>
             <th>参加者</th>
-            <th>得点</th>
-            <th>1位</th>
+            <th>平均点</th>
+            <th>1位率</th>
             <th>本数</th>
           </tr>
         </thead>
@@ -132,13 +143,17 @@ export function Ranking({
                 </small>
               </th>
               <td className="score">
-                {row.score}
+                {row.played ? row.average.toFixed(2) : '-'}
                 <small>pt</small>
+                <small className="score-total">計{row.score}pt</small>
               </td>
-              <td>{row.wins}</td>
+              <td className="win-rate" title={`${row.wins}/${row.played}本`}>
+                {row.played ? `${(row.winRate * 100).toFixed(1)}%` : '-'}
+                <small className="wins-total">{row.wins}回</small>
+              </td>
               <td>
                 {row.played}
-                <small>/{event.gamesPerRound * 4}</small>
+                <small>/{plannedGamesFor(event, row.id)}</small>
               </td>
             </tr>
           ))}
@@ -158,7 +173,11 @@ export function Queue({
   projection?: boolean
 }) {
   const current = currentRound(event)
-  const index = current ? event.rounds.indexOf(current) : 15
+  const index = current ? event.rounds.indexOf(current) : event.rounds.length
+  const appearances = event.members.map(
+    (member) =>
+      event.rounds.filter((round) => round.players.includes(member.id)).length,
+  )
   const complete = event.rounds
     .flatMap((round) => round.results)
     .filter(Boolean).length
@@ -180,19 +199,28 @@ export function Queue({
         </div>
         <div className="podium">
           {standings(event)
-            .filter((row) => row.rank <= event.awards)
+            .filter((row) => row.played > 0 && row.rank <= event.awards)
             .map((row) => (
               <article key={row.id} className="winner">
                 <Award size={38} />
                 <span className="winner-rank">{row.rank}位</span>
                 <h3>{row.name}</h3>
                 <strong>
-                  {row.score}
+                  {row.average.toFixed(2)}
                   <small>pt</small>
                 </strong>
+                <p className="muted">
+                  平均点 · {row.played}本 · 合計{row.score}pt
+                </p>
               </article>
             ))}
         </div>
+        {event.endedEarly && (
+          <p className="notice">
+            途中終了：記録済み{complete}
+            本の平均得点で集計。未参加者は順位対象外です。
+          </p>
+        )}
         <Ranking event={event} self={self} />
       </section>
     )
@@ -221,7 +249,7 @@ export function Queue({
           {current && (
             <span className="round-counter">
               <b>{String(index + 1).padStart(2, '0')}</b>
-              <span>/ 15</span>
+              <span>/ {event.rounds.length}</span>
             </span>
           )}
         </div>
@@ -257,8 +285,8 @@ export function Queue({
                   : '出番終了'}
               </strong>
               <span>
-                {personalScore?.played ?? 0}/{event.gamesPerRound * 4}本 ·{' '}
-                {personalScore?.score ?? 0}pt
+                {personalScore?.played ?? 0}/{plannedGamesFor(event, self)}本 ·
+                平均 {(personalScore?.average ?? 0).toFixed(2)}pt
               </span>
             </div>
           </section>
@@ -285,7 +313,9 @@ export function Queue({
                 <ChevronRight size={18} />
               </article>
             ))}
-          {index >= 14 && <p className="muted">次の対戦はありません</p>}
+          {index >= event.rounds.length - 1 && (
+            <p className="muted">次の対戦はありません</p>
+          )}
         </section>
       </section>
       {!projection && (
@@ -297,19 +327,25 @@ export function Queue({
             </div>
             <div className="progress-number">
               <strong>{complete}</strong>
-              <span>/ {15 * event.gamesPerRound}本</span>
+              <span>/ {event.rounds.length * event.gamesPerRound}本</span>
             </div>
             <progress
               value={complete}
-              max={15 * event.gamesPerRound}
+              max={event.rounds.length * event.gamesPerRound}
               aria-label="記録済みの本数"
             />
             <div className="summary-facts">
               <span>
-                参加者<strong>15人</strong>
+                参加者<strong>{event.members.length}人</strong>
               </span>
               <span>
-                1人の出番<strong>4枠</strong>
+                1人の出番
+                <strong>
+                  {Math.min(...appearances) === Math.max(...appearances)
+                    ? Math.min(...appearances)
+                    : `${Math.min(...appearances)}〜${Math.max(...appearances)}`}
+                  枠
+                </strong>
               </span>
             </div>
           </section>
@@ -326,7 +362,9 @@ export function Queue({
                 </span>
               ))}
             </div>
-            <p>同着は該当順位の平均点。総得点が同じなら1位回数で決定。</p>
+            <p>
+              同着は該当順位の平均点。順位は平均得点、同点なら1位率で決定。未参加者は順位対象外。
+            </p>
           </section>
         </aside>
       )}
@@ -342,7 +380,9 @@ export function Schedule({ event, self }: { event: PartyEvent; self: string }) {
           <span className="eyebrow">MATCH SCHEDULE</span>
           <h2>対戦表</h2>
         </div>
-        <span className="muted">15対戦 · 1人4枠</span>
+        <span className="muted">
+          {event.rounds.length}対戦 · {event.members.length}人
+        </span>
       </div>
       <div className="schedule-list">
         {event.rounds.map((round, index) => (
@@ -364,6 +404,9 @@ export function Schedule({ event, self }: { event: PartyEvent; self: string }) {
               className={`completion ${round.results.every(Boolean) ? 'complete' : ''}`}
             >
               {round.results.filter(Boolean).length}/{event.gamesPerRound}
+              {event.endedEarly && !round.results.every(Boolean)
+                ? ' 打切り'
+                : ''}
               <Check size={14} />
             </span>
           </article>
@@ -384,8 +427,88 @@ function Setup({
 }) {
   const [title, setTitle] = useState(event.title)
   const [members, setMembers] = useState<Member[]>(event.members)
+  const memberPool = useRef({
+    rookie: event.members.filter((member) => member.role === 'rookie'),
+    host: event.members.filter((member) => member.role === 'host'),
+  })
   const [games, setGames] = useState<1 | 2>(event.gamesPerRound)
   const [awards, setAwards] = useState<1 | 3>(event.awards)
+  const [roundCount, setRoundCount] = useState(event.rounds.length)
+  const [inputMode, setInputMode] = useState<'bulk' | 'individual'>('bulk')
+  const [rookieText, setRookieText] = useState(
+    event.members
+      .filter((member) => member.role === 'rookie')
+      .map((member) => member.name)
+      .join('\n'),
+  )
+  const [hostText, setHostText] = useState(
+    event.members
+      .filter((member) => member.role === 'host')
+      .map((member) => member.name)
+      .join('\n'),
+  )
+  let configuredMembers = members
+  let memberError = ''
+  try {
+    if (inputMode === 'bulk')
+      configuredMembers = membersFromText(rookieText, hostText, members)
+    else if (members.length < MIN_MEMBERS || members.length > MAX_MEMBERS)
+      memberError = `参加者は${MIN_MEMBERS}〜${MAX_MEMBERS}人で設定してください。`
+    else if (
+      new Set(members.map((member) => member.name.trim())).size !==
+      members.length
+    )
+      memberError = 'ニックネームが重複しています。'
+  } catch (error) {
+    memberError =
+      error instanceof Error ? error.message : '名前を確認してください。'
+  }
+  const total =
+    inputMode === 'bulk'
+      ? namesFromText(rookieText).length + namesFromText(hostText).length
+      : members.length
+  const minimum = total ? Math.floor((roundCount * 4) / total) : 0
+  const maximum = total ? Math.ceil((roundCount * 4) / total) : 0
+  const synchronize = (next: Member[]) => {
+    for (const role of ['rookie', 'host'] as const) {
+      const visible = next.filter((member) => member.role === role)
+      memberPool.current[role] = [
+        ...visible,
+        ...memberPool.current[role].slice(visible.length),
+      ]
+    }
+    setMembers(next)
+    setRookieText(
+      next
+        .filter((member) => member.role === 'rookie')
+        .map((member) => member.name)
+        .join('\n'),
+    )
+    setHostText(
+      next
+        .filter((member) => member.role === 'host')
+        .map((member) => member.name)
+        .join('\n'),
+    )
+  }
+  const resize = (role: Member['role'], count: number) => {
+    if (!Number.isInteger(count) || count < 0 || count > MAX_MEMBERS) return
+    const group = memberPool.current[role]
+    const others = members.filter((member) => member.role !== role)
+    const names = new Set(members.map((member) => member.name))
+    const resized = Array.from({ length: count }, (_, index) => {
+      if (group[index]) return group[index]
+      const base = `${role === 'host' ? '講師' : '新人'}${String(index + 1).padStart(2, '0')}`
+      let name = base
+      let suffix = 1
+      while (names.has(name)) name = `${base}-${suffix++}`
+      names.add(name)
+      return { id: crypto.randomUUID(), name, role }
+    })
+    synchronize(
+      role === 'rookie' ? [...resized, ...others] : [...others, ...resized],
+    )
+  }
   return (
     <form
       className="setup-form"
@@ -399,9 +522,10 @@ function Setup({
           (await store.submit({
             type: 'configure',
             title,
-            members,
+            members: configuredMembers,
             gamesPerRound: games,
             awards,
+            roundCount,
           })) &&
           begin
         )
@@ -418,6 +542,17 @@ function Setup({
             onChange={(change) => setTitle(change.target.value)}
           />
         </label>
+        <label className="field round-count-field">
+          予定対戦数
+          <input
+            type="number"
+            min={1}
+            max={MAX_ROUNDS}
+            required
+            value={roundCount}
+            onChange={(change) => setRoundCount(Number(change.target.value))}
+          />
+        </label>
         <div className="setup-options">
           <fieldset>
             <legend>1枠のミニゲーム本数</legend>
@@ -430,7 +565,12 @@ function Setup({
                     checked={games === value}
                     onChange={() => setGames(value)}
                   />
-                  {value}本 <small>全員{value * 4}本</small>
+                  {value}本{' '}
+                  <small>
+                    {minimum === maximum
+                      ? `全員${value * minimum}本`
+                      : `${value * minimum}〜${value * maximum}本/人`}
+                  </small>
                 </label>
               ))}
             </div>
@@ -452,38 +592,147 @@ function Setup({
             </div>
           </fieldset>
         </div>
-        <h3>参加者</h3>
-        <div className="roster">
-          {members.map((member, index) => (
-            <label className="field" key={member.id}>
-              <span>
-                <b>{String(index + 1).padStart(2, '0')}</b>
-                {member.role === 'host' ? '講師' : '新人'}
-              </span>
-              <input
-                aria-label={`参加者${index + 1}の名前`}
-                value={member.name}
-                maxLength={24}
-                required
-                onChange={(change) =>
-                  setMembers(
-                    members.map((candidate) =>
-                      candidate.id === member.id
-                        ? { ...candidate, name: change.target.value }
-                        : candidate,
-                    ),
-                  )
-                }
+        <div className="section-heading">
+          <h3>参加者 · {total}人</h3>
+          <span className="muted">
+            {MIN_MEMBERS}〜{MAX_MEMBERS}人 · 開始後は変更不可
+          </span>
+        </div>
+        <div
+          className="game-tabs name-input-tabs"
+          role="tablist"
+          aria-label="名前入力方法"
+        >
+          <button
+            type="button"
+            role="tab"
+            aria-selected={inputMode === 'bulk'}
+            onClick={() => {
+              if (inputMode !== 'bulk') {
+                synchronize(members)
+                setInputMode('bulk')
+              }
+            }}
+          >
+            <ClipboardPaste size={16} />
+            一括
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={inputMode === 'individual'}
+            onClick={() => {
+              if (inputMode === 'bulk' && !memberError) {
+                synchronize(configuredMembers)
+                setInputMode('individual')
+              }
+            }}
+          >
+            <List size={16} />
+            個別
+          </button>
+        </div>
+        {inputMode === 'bulk' ? (
+          <div className="bulk-members">
+            <label className="field">
+              新人（改行区切り）
+              <textarea
+                rows={10}
+                maxLength={4000}
+                value={rookieText}
+                onChange={(change) => setRookieText(change.target.value)}
               />
             </label>
-          ))}
-        </div>
+            <label className="field">
+              講師（改行区切り）
+              <textarea
+                rows={10}
+                maxLength={4000}
+                value={hostText}
+                onChange={(change) => setHostText(change.target.value)}
+              />
+            </label>
+          </div>
+        ) : (
+          <>
+            <div className="participant-counts">
+              <label className="field">
+                新人の人数
+                <input
+                  type="number"
+                  min={0}
+                  max={MAX_MEMBERS}
+                  value={
+                    members.filter((member) => member.role === 'rookie').length
+                  }
+                  onChange={(change) =>
+                    resize('rookie', Number(change.target.value))
+                  }
+                />
+              </label>
+              <label className="field">
+                講師の人数
+                <input
+                  type="number"
+                  min={0}
+                  max={MAX_MEMBERS}
+                  value={
+                    members.filter((member) => member.role === 'host').length
+                  }
+                  onChange={(change) =>
+                    resize('host', Number(change.target.value))
+                  }
+                />
+              </label>
+            </div>
+            <div className="roster">
+              {members.map((member, index) => (
+                <label className="field" key={member.id}>
+                  <span>
+                    <b>{String(index + 1).padStart(2, '0')}</b>
+                    {member.role === 'host' ? '講師' : '新人'}
+                  </span>
+                  <input
+                    aria-label={`参加者${index + 1}の名前`}
+                    value={member.name}
+                    maxLength={24}
+                    required
+                    onChange={(change) =>
+                      synchronize(
+                        members.map((candidate) =>
+                          candidate.id === member.id
+                            ? { ...candidate, name: change.target.value }
+                            : candidate,
+                        ),
+                      )
+                    }
+                  />
+                </label>
+              ))}
+            </div>
+          </>
+        )}
+        {memberError && (
+          <p className="inline-error" role="alert">
+            {memberError}
+          </p>
+        )}
+        {!memberError && minimum === 0 && (
+          <p className="notice">
+            この予定対戦数では未参加になる人がいます。未参加者は順位対象外です。
+          </p>
+        )}
         <div className="form-actions">
-          <button className="button" type="submit">
+          <button className="button" type="submit" disabled={!!memberError}>
             <Save size={18} />
             設定を保存
           </button>
-          <button className="button primary" type="submit" value="begin">
+          <button
+            className="button primary"
+            type="submit"
+            value="begin"
+            disabled={!!memberError}
+          >
             <Play size={18} />
             保存して開始
           </button>
@@ -791,7 +1040,16 @@ export function Admin({
   )
   const [game, setGame] = useState(0)
   const [formVersion, setFormVersion] = useState(0)
-  const [finish, setFinish] = useState(false)
+  const [finish, setFinish] = useState<'normal' | 'early' | null>(null)
+  const [additionalRounds, setAdditionalRounds] = useState(
+    Math.max(
+      1,
+      Math.min(
+        Math.ceil(event.members.length / 4),
+        MAX_ROUNDS - event.rounds.length,
+      ),
+    ),
+  )
   const [editor, setEditor] = useState(
     event.editorIds.find((id) => id !== event.ownerId) ?? '',
   )
@@ -845,11 +1103,21 @@ export function Admin({
               <button
                 className="button"
                 disabled={disabled || !canFinish(event)}
-                onClick={() => setFinish(true)}
+                onClick={() => setFinish('normal')}
               >
                 <Award size={18} />
                 順位を確定
               </button>
+              {!canFinish(event) && (
+                <button
+                  className="button danger"
+                  disabled={disabled || !canFinishEarly(event)}
+                  onClick={() => setFinish('early')}
+                >
+                  <Square size={18} />
+                  途中終了
+                </button>
+              )}
             </>
           )}
         </div>
@@ -916,6 +1184,57 @@ export function Admin({
       )}
       {event.phase !== 'finished' && (
         <>
+          {event.phase !== 'setup' && (
+            <section className="extension-section">
+              <h3>対戦を追加</h3>
+              <form
+                onSubmit={async (submission) => {
+                  submission.preventDefault()
+                  const hadCurrent = currentRound(event)
+                  if (
+                    (await store.submit({
+                      type: 'extend',
+                      count: additionalRounds,
+                    })) &&
+                    !hadCurrent
+                  ) {
+                    const upcoming = currentRound(store.getSnapshot().event!)
+                    if (upcoming) {
+                      setSelectedRound(upcoming.id)
+                      setGame(0)
+                      setFormVersion((value) => value + 1)
+                    }
+                  }
+                }}
+              >
+                <fieldset
+                  disabled={disabled || event.rounds.length >= MAX_ROUNDS}
+                >
+                  <label className="field">
+                    追加対戦数
+                    <input
+                      type="number"
+                      min={1}
+                      max={MAX_ROUNDS - event.rounds.length}
+                      required
+                      value={additionalRounds}
+                      onChange={(change) =>
+                        setAdditionalRounds(Number(change.target.value))
+                      }
+                    />
+                  </label>
+                  <button className="button" type="submit">
+                    <Plus size={18} />
+                    対戦を追加
+                  </button>
+                </fieldset>
+              </form>
+              <p className="muted">
+                現在{event.rounds.length}対戦 · 最大{MAX_ROUNDS}対戦 ·
+                記録済み結果は変更しません
+              </p>
+            </section>
+          )}
           <Swap event={event} store={store} disabled={disabled} />
           <details className="admin-details">
             <summary>
@@ -1016,22 +1335,35 @@ export function Admin({
         </ol>
       </details>
       {finish && (
-        <Modal title="最終順位を確定" close={() => setFinish(false)}>
+        <Modal
+          title={finish === 'early' ? '途中終了を確定' : '最終順位を確定'}
+          close={() => setFinish(null)}
+        >
           <p>
-            全員{event.gamesPerRound * 4}
-            本の結果が揃っています。確定後は結果と表彰人数を変更できません。
+            {finish === 'early'
+              ? `記録済み${event.rounds.flatMap((round) => round.results).filter(Boolean).length}本で終了し、未記録の対戦を打ち切ります。`
+              : '予定したすべての結果が揃っています。'}
+            平均得点、同点なら1位率で順位を決めます。未参加
+            {standings(event).filter((row) => row.played === 0).length}
+            人は順位対象外です。確定後は結果の訂正・延長・表彰人数の変更ができません。
           </p>
           <Ranking event={event} />
           <button
             className="button primary wide"
             disabled={disabled}
             onClick={async () => {
-              if (await store.submit({ type: 'phase', phase: 'finished' }))
-                setFinish(false)
+              if (
+                await store.submit(
+                  finish === 'early'
+                    ? { type: 'end-early' }
+                    : { type: 'phase', phase: 'finished' },
+                )
+              )
+                setFinish(null)
             }}
           >
             <Award size={18} />
-            この順位で確定する
+            {finish === 'early' ? '途中終了して確定' : 'この順位で確定する'}
           </button>
         </Modal>
       )}

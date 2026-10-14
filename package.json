@@ -8,9 +8,9 @@
     "build": "tsc -b && vite build --logLevel warn",
     "lint": "oxlint",
     "preview": "vite preview",
-    "test": "vitest run tests/domain.test.ts tests/store.test.ts",
+    "test": "vitest run tests/domain.test.ts tests/store.test.ts tests/flexible.test.ts",
     "test:e2e": "playwright test",
-    "test:rules": "firebase emulators:exec --project demo-party-night --only firestore \"vitest run tests/firestore.test.ts\""
+    "test:rules": "node scripts/test-rules.mjs"
   },
   "overrides": {
     "@grpc/grpc-js": "^1.14.0"

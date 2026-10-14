@@ -1,5 +1,9 @@
 import { z } from 'zod'
 
+export const MIN_MEMBERS = 4
+export const MAX_MEMBERS = 64
+export const MAX_ROUNDS = 200
+
 const memberSchema = z
   .object({
     id: z.string().min(1).max(40),
@@ -30,8 +34,9 @@ export const eventSchema = z
     phase: z.enum(['setup', 'playing', 'paused', 'finished']),
     gamesPerRound: z.union([z.literal(1), z.literal(2)]),
     awards: z.union([z.literal(1), z.literal(3)]),
-    members: z.array(memberSchema).length(15),
-    rounds: z.array(roundSchema).length(15),
+    members: z.array(memberSchema).min(MIN_MEMBERS).max(MAX_MEMBERS),
+    rounds: z.array(roundSchema).min(1).max(MAX_ROUNDS),
+    endedEarly: z.boolean().optional(),
     updatedAt: z.string().datetime(),
     history: z
       .array(
@@ -56,8 +61,11 @@ export type Command =
       members: Member[]
       gamesPerRound: 1 | 2
       awards: 1 | 3
+      roundCount?: number
     }
   | { type: 'phase'; phase: 'playing' | 'paused' | 'finished' }
+  | { type: 'extend'; count: number }
+  | { type: 'end-early' }
   | {
       type: 'result'
       roundId: string
@@ -87,12 +95,16 @@ export function schedule(
   members: Member[],
   gamesPerRound: 1 | 2,
   seed = 42,
+  roundCount = members.length,
+  previous: PartyEvent['rounds'] = [],
 ): PartyEvent['rounds'] {
+  validateMembers(members)
   if (
-    members.length !== 15 ||
-    members.filter((member) => member.role === 'host').length !== 2
+    !Number.isInteger(roundCount) ||
+    roundCount < 1 ||
+    previous.length + roundCount > MAX_ROUNDS
   )
-    throw new Error('新人13人・講師2人を登録してください。')
+    throw new Error(`対戦数は1〜${MAX_ROUNDS}の範囲で設定してください。`)
   const shuffle = random(seed)
   const rookies = members.filter((member) => member.role === 'rookie')
   for (let index = rookies.length - 1; index > 0; index--) {
@@ -100,14 +112,117 @@ export function schedule(
     ;[rookies[index], rookies[target]] = [rookies[target], rookies[index]]
   }
   const hosts = members.filter((member) => member.role === 'host')
-  const ordered = [hosts[0], rookies[0], hosts[1], ...rookies.slice(1)]
-  return Array.from({ length: 15 }, (_, index) => ({
-    id: `round-${index + 1}`,
-    players: [0, 1, 4, 7].map(
-      (offset) => ordered[(index * 2 + offset) % 15].id,
-    ),
-    results: Array.from({ length: gamesPerRound }, () => null),
-  }))
+  const ordered = [...hosts, ...rookies]
+  const counts = new Map(members.map((member) => [member.id, 0]))
+  const seats = new Map(members.map((member) => [member.id, [0, 0, 0, 0]]))
+  const pairs = new Map<string, number>()
+  const key = (first: string, second: string) =>
+    JSON.stringify([first, second].sort())
+  const account = (players: string[]) => {
+    players.forEach((id, position) => {
+      counts.set(id, counts.get(id)! + 1)
+      seats.get(id)![position]++
+      players.slice(position + 1).forEach((other) => {
+        const pair = key(id, other)
+        pairs.set(pair, (pairs.get(pair) ?? 0) + 1)
+      })
+    })
+  }
+  previous.forEach((round) => account(round.players))
+  let last = previous.at(-1)?.players ?? []
+  const usedIds = new Set(previous.map((round) => round.id))
+  let sequence = previous.length + 1
+  return Array.from({ length: roundCount }, () => {
+    const selected: Member[] = []
+    while (selected.length < 4) {
+      const hasHost = selected.some((member) => member.role === 'host')
+      const candidates = ordered.filter((member) => !selected.includes(member))
+      const repeats = (member: Member) =>
+        selected.reduce(
+          (total, other) => total + (pairs.get(key(member.id, other.id)) ?? 0),
+          0,
+        )
+      candidates.sort(
+        (first, second) =>
+          counts.get(first.id)! - counts.get(second.id)! ||
+          Number(last.includes(first.id)) - Number(last.includes(second.id)) ||
+          (hasHost
+            ? Number(first.role === 'host') - Number(second.role === 'host')
+            : Number(second.role === 'host') - Number(first.role === 'host')) ||
+          repeats(first) - repeats(second),
+      )
+      selected.push(candidates[0])
+    }
+    const remaining = [...selected]
+    const players = Array.from({ length: 4 }, (_, position) => {
+      remaining.sort(
+        (first, second) =>
+          seats.get(first.id)![position] - seats.get(second.id)![position],
+      )
+      return remaining.shift()!.id
+    })
+    account(players)
+    last = players
+    while (usedIds.has(`round-${sequence}`)) sequence++
+    const id = `round-${sequence++}`
+    usedIds.add(id)
+    return {
+      id,
+      players,
+      results: Array.from({ length: gamesPerRound }, () => null),
+    }
+  })
+}
+
+function validateMembers(members: Member[]) {
+  if (members.length < MIN_MEMBERS || members.length > MAX_MEMBERS)
+    throw new Error(
+      `参加者は${MIN_MEMBERS}〜${MAX_MEMBERS}人で設定してください。`,
+    )
+  if (!z.array(memberSchema).safeParse(members).success)
+    throw new Error('名前は空欄にせず、1〜24文字で入力してください。')
+  if (new Set(members.map((member) => member.id)).size !== members.length)
+    throw new Error('参加者IDが重複しています。')
+  if (new Set(members.map((member) => member.name)).size !== members.length)
+    throw new Error('ニックネームが重複しています。')
+}
+
+export function namesFromText(text: string) {
+  return text
+    .split(/\r\n?|\n/)
+    .map((name) => name.trim())
+    .filter(Boolean)
+}
+
+export function membersFromText(
+  rookies: string,
+  hosts: string,
+  previous: Member[] = [],
+): Member[] {
+  const usedIds = new Set(previous.map((member) => member.id))
+  let sequence = 1
+  const members = (['rookie', 'host'] as const).flatMap((role) => {
+    const names = namesFromText(role === 'rookie' ? rookies : hosts)
+    const existing = previous.filter((member) => member.role === role)
+    return names.map((name, index) => {
+      let id = existing[index]?.id
+      if (!id) {
+        while (usedIds.has(`member-${sequence}`)) sequence++
+        id = `member-${sequence++}`
+        usedIds.add(id)
+      }
+      return { id, name, role }
+    })
+  })
+  validateMembers(members)
+  return members
+}
+
+export function plannedGamesFor(event: PartyEvent, id: string) {
+  return (
+    event.rounds.filter((round) => round.players.includes(id)).length *
+    event.gamesPerRound
+  )
 }
 
 export function validRanks(ranks: number[]) {
@@ -132,20 +247,16 @@ export function points(ranks: number[]) {
 
 export function parseEvent(input: unknown): PartyEvent {
   const event = eventSchema.parse(input)
+  validateMembers(event.members)
   const ids = event.members.map((member) => member.id)
-  if (new Set(event.members.map((member) => member.name)).size !== 15)
-    throw new Error('ニックネームが重複しています。')
-  if (
-    new Set(ids).size !== 15 ||
-    event.members.filter((member) => member.role === 'host').length !== 2
-  )
-    throw new Error('参加者の構成が不正です。')
   if (
     !event.editorIds.includes(event.ownerId) ||
     new Set(event.editorIds).size !== event.editorIds.length
   )
     throw new Error('司会者設定が不正です。')
-  if (new Set(event.rounds.map((round) => round.id)).size !== 15)
+  if (
+    new Set(event.rounds.map((round) => round.id)).size !== event.rounds.length
+  )
     throw new Error('対戦IDが重複しています。')
   for (const round of event.rounds) {
     if (
@@ -154,24 +265,12 @@ export function parseEvent(input: unknown): PartyEvent {
       round.results.length !== event.gamesPerRound
     )
       throw new Error('対戦表が不正です。')
-    if (
-      round.players.filter(
-        (id) =>
-          event.members.find((member) => member.id === id)?.role === 'host',
-      ).length > 1
-    )
-      throw new Error('講師2人の出番は分けてください。')
     round.results.forEach((result) => {
       if (result) points(result.ranks)
     })
   }
-  if (
-    ids.some(
-      (id) =>
-        event.rounds.filter((round) => round.players.includes(id)).length !== 4,
-    )
-  )
-    throw new Error('全員の出番を4回に揃えてください。')
+  if (event.endedEarly && event.phase !== 'finished')
+    throw new Error('途中終了は順位確定時のみ設定できます。')
   if (
     event.phase === 'setup' &&
     event.rounds.some((round) => round.results.some(Boolean))
@@ -223,33 +322,56 @@ export function standings(event: PartyEvent) {
           played++
         })
       })
-      return { ...member, score, wins, played, rank: 0 }
+      return {
+        ...member,
+        score,
+        wins,
+        played,
+        average: played ? score / played : 0,
+        winRate: played ? wins / played : 0,
+        rank: 0,
+      }
     })
     .sort(
       (first, second) =>
-        second.score - first.score ||
-        second.wins - first.wins ||
+        Number(second.played > 0) - Number(first.played > 0) ||
+        second.score * first.played - first.score * second.played ||
+        second.wins * first.played - first.wins * second.played ||
         first.id.localeCompare(second.id),
     )
   rows.forEach((row, index) => {
     row.rank =
-      index > 0 &&
-      row.score === rows[index - 1].score &&
-      row.wins === rows[index - 1].wins
-        ? rows[index - 1].rank
-        : index + 1
+      row.played === 0
+        ? 0
+        : index > 0 &&
+            row.score * rows[index - 1].played ===
+              rows[index - 1].score * row.played &&
+            row.wins * rows[index - 1].played ===
+              rows[index - 1].wins * row.played
+          ? rows[index - 1].rank
+          : index + 1
   })
   return rows
 }
 
 export function canFinish(event: PartyEvent) {
+  const recorded = event.rounds.some((round) => round.results.some(Boolean))
   return (
-    event.rounds.every((round) => round.results.every(Boolean)) &&
-    standings(event).every((row) => row.played === event.gamesPerRound * 4)
+    recorded &&
+    (event.endedEarly === true ||
+      event.rounds.every((round) => round.results.every(Boolean)))
+  )
+}
+
+export function canFinishEarly(event: PartyEvent) {
+  return (
+    (event.phase === 'playing' || event.phase === 'paused') &&
+    event.rounds.some((round) => round.results.some(Boolean))
   )
 }
 
 export function currentRound(event: PartyEvent) {
+  if (event.phase === 'finished') return undefined
   return event.rounds.find((round) => round.results.some((result) => !result))
 }
 
@@ -272,18 +394,46 @@ export function applyCommand(
         ...member,
         name: member.name.trim(),
       }))
-      if (new Set(event.members.map((member) => member.name)).size !== 15)
-        throw new Error('ニックネームは重複しないようにしてください。')
+      validateMembers(event.members)
       event.gamesPerRound = command.gamesPerRound
       event.awards = command.awards
-      event.rounds = schedule(event.members, command.gamesPerRound)
+      event.rounds = schedule(
+        event.members,
+        command.gamesPerRound,
+        42,
+        command.roundCount ?? event.rounds.length,
+      )
       message = '参加者・対戦本数を設定'
+      break
+    case 'extend': {
+      if (event.phase !== 'playing' && event.phase !== 'paused')
+        throw new Error('開始後・確定前に対戦を追加できます。')
+      event.rounds.push(
+        ...schedule(
+          event.members,
+          event.gamesPerRound,
+          42,
+          command.count,
+          event.rounds,
+        ),
+      )
+      message = `${command.count}対戦を追加（合計${event.rounds.length}対戦）`
+      break
+    }
+    case 'end-early':
+      if (!canFinishEarly(event))
+        throw new Error('1本以上記録してから途中終了してください。')
+      event.endedEarly = true
+      event.phase = 'finished'
+      message = '残りの未記録対戦を打ち切り、平均得点で最終順位を確定'
       break
     case 'phase':
       if (command.phase === 'paused' && event.phase !== 'playing')
         throw new Error('対戦中のみ休憩にできます。')
       if (command.phase === 'finished' && !canFinish(event))
-        throw new Error('全員の結果が揃ってから確定してください。')
+        throw new Error(
+          '未記録があります。すべて記録するか、途中終了を選択してください。',
+        )
       event.phase = command.phase
       message =
         command.phase === 'finished'
@@ -372,10 +522,11 @@ export function csv(event: PartyEvent) {
   return (
     '\uFEFF' +
     [
-      ['順位', '名前', '得点', '1位回数', '実施本数'],
+      ['順位', '名前', '平均得点', '合計得点', '1位回数', '実施本数'],
       ...standings(event).map((row) => [
-        row.rank,
+        row.played ? row.rank : '',
         row.name,
+        row.played ? row.average.toFixed(3) : '',
         row.score,
         row.wins,
         row.played,

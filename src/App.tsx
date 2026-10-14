@@ -19,16 +19,15 @@ import {
   X,
 } from 'lucide-react'
 import { QRCodeSVG } from 'qrcode.react'
-import {
-  Admin,
-  Backups,
-  Modal,
-  Queue,
-  Ranking,
-  Schedule,
-} from './components'
+import { Admin, Backups, Modal, Queue, Ranking, Schedule } from './components'
 import { currentRound } from './domain'
-import { PartyStore, cloudMode, eventId, invalidConfig, download } from './store'
+import {
+  PartyStore,
+  cloudMode,
+  eventId,
+  invalidConfig,
+  download,
+} from './store'
 
 const query = new URLSearchParams(location.search)
 const projection = query.get('display') === '1'
@@ -262,11 +261,12 @@ export default function App() {
               <div className="event-stats">
                 <span>
                   <UsersRound size={16} />
-                  15人
+                  {event.members.length}人
                 </span>
                 <span>
                   <Gamepad2 size={16} />
-                  {completed}/{15 * event.gamesPerRound}本
+                  {completed}/{event.rounds.length * event.gamesPerRound}本
+                  {event.endedEarly ? ' · 途中終了' : ''}
                 </span>
               </div>
             </section>

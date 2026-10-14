@@ -1194,18 +1194,18 @@
       display: block;
     }
     .seats {
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 10px;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 6px;
     }
     .seat {
-      min-height: 144px;
-      padding: 16px;
+      min-height: 170px;
+      padding: 12px 8px;
     }
     .seat h3 {
-      font-size: 16px;
+      font-size: 12px;
     }
     .seat-number {
-      font-size: 30px;
+      font-size: 24px;
       margin-bottom: 12px;
     }
     .round-counter b {
@@ -1215,8 +1215,9 @@
       gap: 12px;
     }
     .upcoming-row > div {
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 8px 12px;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 6px;
+      font-size: 10px;
     }
     .side-summary {
       border-left: 0;
@@ -1260,10 +1261,10 @@
       width: 70px;
     }
     .ranking thead th:nth-child(4) {
-      width: 38px;
+      width: 56px;
     }
     .ranking thead th:last-child {
-      width: 48px;
+      width: 54px;
     }
     .rank-number {
       font-size: 16px;
@@ -1289,12 +1290,12 @@
       font-size: 20px;
     }
     .schedule-members {
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 10px;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 6px;
     }
     .schedule-members > span {
-      font-size: 11px;
-      padding-left: 7px;
+      font-size: 10px;
+      padding-left: 5px;
     }
     .completion {
       gap: 4px;
@@ -1446,6 +1447,100 @@
     }
     dialog::backdrop {
       background: none;
+    }
+  }
+}
+
+@layer components {
+  textarea {
+    font: inherit;
+    color: var(--ink);
+    background: #fff;
+    width: 100%;
+    min-width: 0;
+    border: 1px solid #cbd6d0;
+    border-radius: 5px;
+    padding: 12px;
+    resize: vertical;
+    line-height: 1.8;
+  }
+  .round-count-field {
+    max-width: 240px;
+    margin-top: 20px;
+  }
+  .bulk-members {
+    display: grid;
+    grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+    gap: 24px;
+    margin: 18px 0 24px;
+  }
+  .name-input-tabs {
+    display: inline-flex;
+    margin-bottom: 8px;
+  }
+  .participant-counts {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+    margin-top: 18px;
+  }
+  .score .score-total {
+    display: block;
+    margin-left: 0;
+    font-size: 10px;
+    font-weight: 400;
+    color: var(--muted);
+  }
+  .win-rate {
+    font-family: var(--number);
+    font-size: 11px;
+  }
+  .wins-total {
+    display: block;
+    color: var(--muted);
+    font-size: 10px;
+  }
+  .extension-section {
+    padding: 20px 0;
+    border-top: 1px solid var(--line);
+  }
+  .extension-section h3 {
+    margin-bottom: 16px;
+  }
+  .extension-section fieldset {
+    display: flex;
+    align-items: end;
+    gap: 16px;
+    margin-bottom: 12px;
+  }
+  .extension-section .field {
+    max-width: 180px;
+  }
+}
+@layer responsive {
+  @media (max-width: 760px) {
+    .bulk-members {
+      grid-template-columns: 1fr;
+      gap: 18px;
+    }
+    .projection .seat {
+      padding: 12px 8px;
+      min-height: 170px;
+    }
+    .projection .seat h3 {
+      font-size: 12px;
+    }
+    .projection .seat-number {
+      font-size: 24px;
+    }
+    .projection .upcoming-row > div {
+      font-size: 10px;
+    }
+    .phase-actions .button {
+      flex-basis: 100px;
+    }
+    .extension-section fieldset {
+      gap: 10px;
     }
   }
 }

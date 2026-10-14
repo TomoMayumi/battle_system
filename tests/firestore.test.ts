@@ -14,7 +14,12 @@ import {
   getDocs,
   setDoc,
 } from 'firebase/firestore'
-import { applyCommand, createEvent } from '../src/domain'
+import {
+  applyCommand,
+  createEvent,
+  membersFromText,
+  schedule,
+} from '../src/domain'
 
 let environment: RulesTestEnvironment
 const id = '12345678901234567890123456789012'
@@ -38,6 +43,70 @@ afterAll(async () => {
 })
 
 describe('Firestore権限', () => {
+  it.each([4, 10, 16, 64])(
+    '%i人・可変対戦数のイベントを作成できる',
+    async (count) => {
+      const event = createEvent('owner')
+      event.members = membersFromText(
+        Array.from({ length: count }, (_, index) => `参加者${index + 1}`).join(
+          '\n',
+        ),
+        '',
+      )
+      event.rounds = schedule(event.members, 2, 42, 3)
+      await assertSucceeds(setDoc(doc(identity('owner'), 'events', id), event))
+    },
+  )
+  it('人数・対戦数の範囲外と不正な終了フラグを拒否', async () => {
+    const event = createEvent('owner')
+    const reference = doc(identity('owner'), 'events', id)
+    await assertFails(
+      setDoc(reference, { ...event, members: event.members.slice(0, 3) }),
+    )
+    await assertFails(
+      setDoc(reference, {
+        ...event,
+        members: Array.from({ length: 65 }, (_, index) => ({
+          id: `person-${index}`,
+          name: `人${index}`,
+          role: 'rookie',
+        })),
+      }),
+    )
+    await assertFails(setDoc(reference, { ...event, rounds: [] }))
+    await assertFails(
+      setDoc(reference, {
+        ...event,
+        rounds: Array.from({ length: 201 }, () => event.rounds[0]),
+      }),
+    )
+    await assertFails(setDoc(reference, { ...event, endedEarly: 'yes' }))
+  })
+  it('開始後の延長と途中終了を許可し、確定後の延長は拒否', async () => {
+    const reference = doc(identity('owner'), 'events', id)
+    let event = createEvent('owner')
+    await setDoc(reference, event)
+    event = applyCommand(event, { type: 'phase', phase: 'playing' })
+    await assertSucceeds(setDoc(reference, event))
+    event = applyCommand(event, {
+      type: 'result',
+      roundId: 'round-1',
+      game: 0,
+      result: { ranks: [1, 2, 3, 4], title: 'ゲーム' },
+    })
+    await assertSucceeds(setDoc(reference, event))
+    event = applyCommand(event, { type: 'extend', count: 3 })
+    await assertSucceeds(setDoc(reference, event))
+    event = applyCommand(event, { type: 'end-early' })
+    await assertSucceeds(setDoc(reference, event))
+    await assertFails(
+      setDoc(reference, {
+        ...event,
+        phase: 'playing',
+        revision: event.revision + 1,
+      }),
+    )
+  })
   it('主催者だけが自分のイベントを作成できる', async () => {
     await assertSucceeds(
       setDoc(doc(identity('owner'), 'events', id), createEvent('owner')),
