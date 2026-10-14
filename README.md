@@ -2,6 +2,15 @@
 
 新人13人・講師2人の打ち上げ用。スマホで出番と順位を閲覧し、司会者がミニゲームの結果を入力します。
 
+## 公開先
+
+- Web: https://battle-system-tm-20261014.web.app/
+- GitHub: https://github.com/TomoMayumi/battle_system
+- Firebase: `battle-system-tm-20261014`、無料Spark、Firestore東京（asia-northeast1）。
+- Google認証設定: https://console.firebase.google.com/project/battle-system-tm-20261014/authentication/providers
+
+利用前にGoogleログインを有効化し、主催者が公開サイトでイベントを作成してください。参加者には作成後のイベント閲覧URLを共有します。
+
 ## ローカルで試す
 
 Node.js 22.12以上とnpmを使用します。

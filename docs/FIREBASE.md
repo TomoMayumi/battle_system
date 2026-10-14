@@ -1,5 +1,15 @@
 # Firebase無料プランで公開
 
+公開環境は `battle-system-tm-20261014`、URLは https://battle-system-tm-20261014.web.app/ です。以下は設定の確認・再作成・再公開の手順です。
+
+課金未接続とGoogle認証設定は、CLIログイン後に次の読取専用コマンドで確認できます。認証トークンやOAuthクライアント秘密鍵は表示しません。
+
+```powershell
+node scripts/firebase-check.mjs battle-system-tm-20261014 --check-auth
+```
+
+`--enable-firestore` を付けた場合だけ、課金未接続を確認してFirestore APIを有効化します。確認スクリプトはFirebase CLIの内部モジュールを利用するため、CLI更新時には動作確認が必要です。
+
 ## 1. プロジェクトを用意
 
 1. https://console.firebase.google.com/ に主催者のGoogleアカウントでログイン。
