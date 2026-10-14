@@ -1,0 +1,51 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null && request.auth.token.email_verified == true;
+    }
+    function validData(data) {
+      return data.keys().hasAll(['schemaVersion', 'title', 'ownerId', 'editorIds', 'revision', 'phase', 'gamesPerRound', 'awards', 'members', 'rounds', 'updatedAt', 'history'])
+        && data.keys().hasOnly(['schemaVersion', 'title', 'ownerId', 'editorIds', 'revision', 'phase', 'gamesPerRound', 'awards', 'members', 'rounds', 'updatedAt', 'history'])
+        && data.schemaVersion == 1
+        && data.title is string && data.title.size() > 0 && data.title.size() <= 60
+        && data.ownerId is string && data.ownerId.size() > 0 && data.ownerId.size() <= 128
+        && data.editorIds is list && data.editorIds.size() >= 1 && data.editorIds.size() <= 2
+        && data.editorIds[0] is string && (data.editorIds.size() == 1 || data.editorIds[1] is string)
+        && data.editorIds.toSet().size() == data.editorIds.size() && data.ownerId in data.editorIds
+        && data.revision is int && data.revision >= 0
+        && data.phase in ['setup', 'playing', 'paused', 'finished']
+        && data.gamesPerRound in [1, 2] && data.awards in [1, 3]
+        && data.members is list && data.members.size() == 15
+        && data.rounds is list && data.rounds.size() == 15
+        && data.updatedAt is string && data.updatedAt.size() <= 40
+        && data.history is list && data.history.size() <= 100;
+    }
+    function validTransition(before, after) {
+      return (before == 'setup' && after in ['setup', 'playing'])
+        || (before == 'playing' && after in ['playing', 'paused', 'finished'])
+        || (before == 'paused' && after in ['paused', 'playing', 'finished']);
+    }
+    match /events/{eventId} {
+      allow get: if eventId.matches('^[a-f0-9]{32}$');
+      allow list: if false;
+      allow create: if eventId.matches('^[a-f0-9]{32}$') && signedIn()
+        && validData(request.resource.data)
+        && request.resource.data.ownerId == request.auth.uid
+        && request.resource.data.editorIds == [request.auth.uid]
+        && request.resource.data.revision == 0;
+      allow update: if signedIn() && request.auth.uid in resource.data.editorIds
+        && resource.data.phase != 'finished'
+        && validData(request.resource.data)
+        && request.resource.data.ownerId == resource.data.ownerId
+        && request.resource.data.revision == resource.data.revision + 1
+        && validTransition(resource.data.phase, request.resource.data.phase)
+        && (request.resource.data.editorIds == resource.data.editorIds || request.auth.uid == resource.data.ownerId)
+        && (resource.data.phase == 'setup' || (
+          request.resource.data.members == resource.data.members
+          && request.resource.data.gamesPerRound == resource.data.gamesPerRound
+          && request.resource.data.title == resource.data.title));
+      allow delete: if false;
+    }
+  }
+}

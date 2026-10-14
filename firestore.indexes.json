@@ -1,0 +1,8 @@
+{
+  "indexes": [],
+  "fieldOverrides": [
+    { "collectionGroup": "events", "fieldPath": "members", "indexes": [] },
+    { "collectionGroup": "events", "fieldPath": "rounds", "indexes": [] },
+    { "collectionGroup": "events", "fieldPath": "history", "indexes": [] }
+  ]
+}
