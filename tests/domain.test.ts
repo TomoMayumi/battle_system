@@ -8,6 +8,7 @@ import {
   points,
   ranksFromOrder,
   resultOrder,
+  substitutionTarget,
   schedule,
   standings,
 } from '../src/domain'
@@ -43,6 +44,52 @@ describe('公平な対戦表', () => {
 })
 
 describe('採点・保存検証', () => {
+  it('未記録対戦の出場者を変更し、実際の出場者へ得点を付ける', () => {
+    const event = applyCommand(createEvent(), { type: 'phase', phase: 'playing' })
+    const memberId = event.rounds[0].players[0]
+    const replacementId = event.rounds[1].players[0]
+    const changed = applyCommand(event, { type: 'substitute', roundId: 'round-1', memberId,
+      replacementId, adjustFuture: false, expectedPlayers: event.rounds[0].players })
+    expect(changed.members).toEqual(event.members)
+    expect(changed.rounds[0].players[0]).toBe(replacementId)
+    expect(changed.rounds.slice(1)).toEqual(event.rounds.slice(1))
+    const recorded = applyCommand(changed, { type: 'result', roundId: 'round-1', game: 0,
+      result: { title: '交代後', ranks: [1, 2, 3, 4] }, expectedPlayers: changed.rounds[0].players })
+    expect(standings(recorded).find((member) => member.id === replacementId)?.score).toBe(4)
+    expect(standings(recorded).find((member) => member.id === memberId)?.played).toBe(0)
+    expect(() => applyCommand(recorded, { type: 'substitute', roundId: 'round-1', memberId: replacementId,
+      replacementId: memberId, adjustFuture: false, expectedPlayers: recorded.rounds[0].players })).toThrow('記録済み')
+  })
+  it('交代相手の次の出番を交換し、各人の予定回数を保持する', () => {
+    const event = applyCommand(createEvent(), { type: 'phase', phase: 'playing' })
+    const memberId = event.rounds[0].players[0]
+    const replacementId = event.rounds[1].players[0]
+    expect(substitutionTarget(event, 'round-1', memberId, replacementId)?.id).toBe('round-2')
+    const changed = applyCommand(event, { type: 'substitute', roundId: 'round-1', memberId,
+      replacementId, adjustFuture: true, expectedPlayers: event.rounds[0].players })
+    expect(changed.rounds[1].players[0]).toBe(memberId)
+    expect(changed.rounds.slice(2)).toEqual(event.rounds.slice(2))
+    for (const member of event.members)
+      expect(changed.rounds.filter((round) => round.players.includes(member.id)).length)
+        .toBe(event.rounds.filter((round) => round.players.includes(member.id)).length)
+  })
+  it('重複・未登録者・古い出場者の入力・確定後変更を拒否し、交換先がなければ以降を保持する', () => {
+    const event = applyCommand(createEvent(), { type: 'phase', phase: 'playing' })
+    const command = { type: 'substitute' as const, roundId: 'round-15', memberId: event.rounds[14].players[0],
+      replacementId: event.rounds[0].players[0], adjustFuture: true, expectedPlayers: event.rounds[14].players }
+    command.replacementId = event.members.find((member) => !event.rounds[14].players.includes(member.id))!.id
+    const changed = applyCommand(event, command)
+    expect(changed.rounds.slice(0, 14)).toEqual(event.rounds.slice(0, 14))
+    expect(changed.history.at(-1)?.message).toContain('以降の対戦は変更なし')
+    expect(() => applyCommand(event, { ...command, replacementId: command.expectedPlayers[1] })).toThrow('登録済み')
+    expect(() => applyCommand(event, { ...command, replacementId: 'unknown' })).toThrow('登録済み')
+    expect(() => applyCommand(changed, command)).toThrow('出場者が変更')
+    expect(() => applyCommand(changed, { type: 'result', roundId: 'round-15', game: 0,
+      result: { title: '古い入力', ranks: [1, 2, 3, 4] }, expectedPlayers: command.expectedPlayers })).toThrow('出場者が変更')
+    const recorded = applyCommand(changed, { type: 'result', roundId: 'round-15', game: 0,
+      result: { title: '結果', ranks: [1, 2, 3, 4] } })
+    expect(() => applyCommand(applyCommand(recorded, { type: 'end-early' }), command)).toThrow('確定済み')
+  })
   it('並び順と同率を元の席順の順位へ変換し、訂正時にも復元できる', () => {
     expect(ranksFromOrder([2, 0, 3, 1], [true, false, false])).toEqual([1, 4, 1, 3])
     expect(ranksFromOrder([0, 1, 2, 3], [false, true, false])).toEqual([1, 2, 2, 4])

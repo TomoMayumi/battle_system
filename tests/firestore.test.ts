@@ -43,6 +43,21 @@ afterAll(async () => {
 })
 
 describe('Firestore権限', () => {
+  it('司会は出場者を変更して記録できるが、公開リンクからの出場者変更は拒否', async () => {
+    const event = applyCommand(createEvent('owner'), { type: 'phase', phase: 'playing' })
+    await environment.withSecurityRulesDisabled(async (context) =>
+      setDoc(doc(context.firestore(), 'events', id), event),
+    )
+    const next = applyCommand(event, { type: 'substitute', roundId: 'round-1',
+      memberId: event.rounds[0].players[0], replacementId: event.rounds[1].players[0],
+      adjustFuture: true, expectedPlayers: event.rounds[0].players })
+    await assertFails(setDoc(doc(environment.unauthenticatedContext().firestore(), 'events', id), next))
+    await assertFails(setDoc(doc(identity('stranger'), 'events', id), next))
+    await assertSucceeds(setDoc(doc(identity('owner'), 'events', id), next))
+    const recorded = applyCommand(next, { type: 'result', roundId: 'round-1', game: 0,
+      result: { title: '交代後', ranks: [1, 2, 3, 4] }, expectedPlayers: next.rounds[0].players }, '参加者')
+    await assertSucceeds(setDoc(doc(environment.unauthenticatedContext().firestore(), 'events', id), recorded))
+  })
   it('未ログインで1本ずつ入力・訂正・取消でき、同着にも対応する', async () => {
     let event = applyCommand(createEvent('owner'), { type: 'phase', phase: 'playing' })
     await environment.withSecurityRulesDisabled(async (context) =>

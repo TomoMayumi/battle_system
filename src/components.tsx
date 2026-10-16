@@ -41,6 +41,7 @@ import {
   points,
   ranksFromOrder,
   resultOrder,
+  substitutionTarget,
   standings,
 } from './domain'
 import type { Member, PartyEvent, Result } from './domain'
@@ -822,6 +823,8 @@ function ResultForm({
 }) {
   const round = event.rounds.find((candidate) => candidate.id === roundId)!
   const [original] = useState(round.results[game])
+  const [originalPlayers] = useState(() => [...round.players])
+  const playersChanged = JSON.stringify(originalPlayers) !== JSON.stringify(round.players)
   const [placement, setPlacement] = useState(() => resultOrder(original?.ranks ?? [1, 2, 3, 4]))
   const [title, setTitle] = useState(original?.title ?? 'ミニゲーム')
   const numeric = ranksFromOrder(placement.order, placement.ties)
@@ -846,6 +849,7 @@ function ResultForm({
     <form
       onSubmit={async (submission) => {
         submission.preventDefault()
+        if (playersChanged) return
         const result: Result = { ranks: numeric, title }
         if (
           await store.submit({
@@ -854,11 +858,24 @@ function ResultForm({
             game,
             result,
             expected: original,
+            expectedPlayers: originalPlayers,
           })
         )
           onSaved()
       }}
     >
+      {playersChanged && (
+        <div className="notice" role="alert">
+          <p>出場者が変更されました。入力はまだ保存されていません。</p>
+          <button type="button" className="button" disabled={disabled}
+            onClick={() => {
+              if (confirm('現在の入力を破棄して、変更後の出場者を読み込みますか？')) onSaved()
+            }}>
+            <Shuffle size={16} />
+            出場者の変更を反映
+          </button>
+        </div>
+      )}
       <fieldset disabled={disabled}>
         <label className="field">
           ゲーム名
@@ -878,7 +895,7 @@ function ResultForm({
             <div className="result-players">
               {placement.order.map((seat, position) => (
                 <ResultPlayer key={seat} seat={seat} position={position}
-                  name={event.members.find((member) => member.id === round.players[seat])?.name ?? ''}
+                  name={event.members.find((member) => member.id === originalPlayers[seat])?.name ?? ''}
                   rank={numeric[seat]} score={score[seat]} disabled={disabled}
                   tied={position > 0 && placement.ties[position - 1]}
                   onMove={(direction) => move(position, position + direction)}
@@ -894,7 +911,7 @@ function ResultForm({
           <button
             className="button primary"
             type="submit"
-            disabled={!title.trim()}
+            disabled={!title.trim() || playersChanged}
           >
             <Save size={18} />
             {original ? '結果を訂正' : '結果を保存'}
@@ -903,6 +920,7 @@ function ResultForm({
             <button
               type="button"
               className="button danger"
+              disabled={playersChanged}
               onClick={async () => {
                 if (
                   confirm('この結果を取り消しますか？訂正履歴は残ります。') &&
@@ -912,6 +930,7 @@ function ResultForm({
                     game,
                     result: null,
                     expected: original,
+                    expectedPlayers: originalPlayers,
                   }))
                 )
                   onSaved()
@@ -924,6 +943,76 @@ function ResultForm({
         </div>
       </fieldset>
     </form>
+  )
+}
+
+function SubstitutePlayers({ event, roundId, store, disabled, onChanged }: {
+  event: PartyEvent
+  roundId: string
+  store: PartyStore
+  disabled: boolean
+  onChanged: () => void
+}) {
+  const round = event.rounds.find((candidate) => candidate.id === roundId)!
+  const [memberId, setMemberId] = useState('')
+  const [replacementId, setReplacementId] = useState('')
+  const [adjustFuture, setAdjustFuture] = useState(true)
+  const recorded = round.results.some(Boolean)
+  const next = memberId && replacementId && adjustFuture
+    ? substitutionTarget(event, roundId, memberId, replacementId)
+    : undefined
+  return (
+    <details className="admin-details">
+      <summary><Shuffle size={18} />この対戦の出場者を変更</summary>
+      {recorded ? (
+        <p className="muted">1本でも記録済みの対戦は出場者を変更できません。</p>
+      ) : (
+        <form onSubmit={async (submission) => {
+          submission.preventDefault()
+          if (await store.submit({ type: 'substitute', roundId, memberId, replacementId,
+            adjustFuture, expectedPlayers: [...round.players] })) {
+            setMemberId('')
+            setReplacementId('')
+            onChanged()
+          }
+        }}>
+          <fieldset disabled={disabled}>
+            <div className="swap-fields">
+              <label className="field">交代する参加者
+                <select required value={memberId} onChange={(change) => setMemberId(change.target.value)}>
+                  <option value="">現在の出場者を選択</option>
+                  {round.players.map((id, seat) => (
+                    <option key={id} value={id}>{seat + 1}P · {event.members.find((member) => member.id === id)?.name}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="field">代わりに出場する参加者
+                <select required value={replacementId} onChange={(change) => setReplacementId(change.target.value)}>
+                  <option value="">代わりの参加者を選択</option>
+                  {event.members.filter((member) => !round.players.includes(member.id)).map((member) => (
+                    <option key={member.id} value={member.id}>{member.name}</option>
+                  ))}
+                </select>
+              </label>
+            </div>
+            <label className="substitution-options">
+              <input type="checkbox" checked={adjustFuture} onChange={(change) => setAdjustFuture(change.target.checked)} />
+              以降の出番も調整
+            </label>
+            {memberId && replacementId && (
+              <p className="muted">
+                {next ? `第${event.rounds.indexOf(next) + 1}対戦の出番も交換します。`
+                  : adjustFuture ? '交換できる次の出番がないため、以降の対戦は変更しません。'
+                    : '以降の対戦は変更しません。'}
+              </p>
+            )}
+            <button type="submit" className="button" disabled={!memberId || !replacementId}>
+              <Shuffle size={16} />出場者を変更
+            </button>
+          </fieldset>
+        </form>
+      )}
+    </details>
   )
 }
 
@@ -1252,6 +1341,14 @@ export function Admin({
               ))}
             </div>
           </div>
+          {!resultsOnly && (
+            <SubstitutePlayers key={`${round.id}-${round.players.join(':')}`} event={event}
+              roundId={round.id} store={store} disabled={disabled}
+              onChanged={() => {
+                setGame(0)
+                setFormVersion((value) => value + 1)
+              }} />
+          )}
           <ResultForm
             key={`${round.id}-${game}-${formVersion}`}
             event={event}

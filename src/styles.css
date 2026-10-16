@@ -929,6 +929,22 @@
   }
   .admin-details {
     border-top: 1px solid var(--line);
+  }
+  .substitution-options {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 12px 0;
+    font-size: 13px;
+  }
+  .substitution-options input {
+    width: 17px;
+    height: 17px;
+    min-height: 17px;
+    padding: 0;
+    accent-color: var(--green);
+  }
+  .admin-details {
     padding: 20px 0;
   }
   .admin-details summary {

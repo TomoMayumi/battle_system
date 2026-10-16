@@ -97,6 +97,9 @@ describe('共有保存と通信障害', () => {
       result: { ranks: [4, 3, 2, 1], title: '訂正' } })).toBe(true)
     expect(remote.rounds[0].results[0]?.title).toBe('訂正')
     expect(await store.submit({ type: 'awards', awards: 1 })).toBe(false)
+    expect(await store.submit({ type: 'substitute', roundId: 'round-1',
+      memberId: remote.rounds[0].players[0], replacementId: remote.rounds[1].players[0],
+      adjustFuture: false, expectedPlayers: remote.rounds[0].players })).toBe(false)
     network.onLine = false
     expect(await store.submit({ ...command, game: 1 })).toBe(false)
     expect(store.getSnapshot().pending).not.toBeNull()
@@ -193,6 +196,19 @@ describe('共有保存と通信障害', () => {
       }),
     ).toBe(false)
     expect(remote.rounds[0].results[0]?.title).toBe('最初')
+    stop()
+  })
+  it('出場者の変更前に開いた結果フォームで別人に得点を付けない', async () => {
+    const { store, stop } = await startStore()
+    const expectedPlayers = [...remote.rounds[0].players]
+    remote = applyCommand(remote, { type: 'substitute', roundId: 'round-1',
+      memberId: expectedPlayers[0], replacementId: remote.rounds[1].players[0],
+      adjustFuture: false, expectedPlayers })
+    callbacks.forEach((listener) => listener(remote, false))
+    expect(await store.submit({ type: 'result', roundId: 'round-1', game: 0,
+      result: { title: '古い出場者', ranks: [1, 2, 3, 4] }, expected: null, expectedPlayers })).toBe(false)
+    expect(remote.rounds[0].results[0]).toBeNull()
+    expect(store.getSnapshot().error).toContain('出場者が変更')
     stop()
   })
 })

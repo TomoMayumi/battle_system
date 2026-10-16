@@ -76,6 +76,15 @@ export type Command =
       game: number
       result: Result | null
       expected?: Result | null
+      expectedPlayers?: string[]
+    }
+  | {
+      type: 'substitute'
+      roundId: string
+      memberId: string
+      replacementId: string
+      adjustFuture: boolean
+      expectedPlayers: string[]
     }
   | {
       type: 'swap'
@@ -400,6 +409,15 @@ export function currentRound(event: PartyEvent) {
   return event.rounds.find((round) => round.results.some((result) => !result))
 }
 
+export function substitutionTarget(event: PartyEvent, roundId: string, memberId: string, replacementId: string) {
+  const index = event.rounds.findIndex((round) => round.id === roundId)
+  if (index < 0) return undefined
+  return event.rounds.slice(index + 1).find((round) =>
+    round.results.every((result) => !result) &&
+    round.players.includes(replacementId) && !round.players.includes(memberId),
+  )
+}
+
 export function applyCommand(
   source: PartyEvent,
   command: Command,
@@ -481,6 +499,8 @@ export function applyCommand(
       )
         throw new Error('対戦が見つかりません。')
       const previous = round.results[command.game]
+      if (command.expectedPlayers && JSON.stringify(command.expectedPlayers) !== JSON.stringify(round.players))
+        throw new Error('出場者が変更されました。対戦を選び直して確認してください。')
       if (
         'expected' in command &&
         JSON.stringify(command.expected) !== JSON.stringify(previous)
@@ -491,6 +511,27 @@ export function applyCommand(
       round.results[command.game] = command.result
       event.resultEdit = { roundIndex: event.rounds.indexOf(round), game: command.game }
       message = `${round.id} ${command.game + 1}本目: ${previous ? `${previous.ranks.join('/')} → ` : ''}${command.result ? command.result.ranks.join('/') : '取消'}${command.result ? ` (${command.result.title})` : ''}`
+      break
+    }
+    case 'substitute': {
+      if (event.phase !== 'playing' && event.phase !== 'paused')
+        throw new Error('開始後・確定前の対戦で出場者を変更できます。')
+      const round = event.rounds.find((candidate) => candidate.id === command.roundId)
+      if (!round || round.results.some(Boolean))
+        throw new Error('1本でも記録済みの対戦は出場者を変更できません。')
+      if (JSON.stringify(command.expectedPlayers) !== JSON.stringify(round.players))
+        throw new Error('出場者が変更されました。対戦を選び直して確認してください。')
+      const position = round.players.indexOf(command.memberId)
+      if (position < 0 || round.players.includes(command.replacementId) ||
+        !event.members.some((member) => member.id === command.replacementId))
+        throw new Error('この対戦に出場していない登録済み参加者を選んでください。')
+      const next = command.adjustFuture
+        ? substitutionTarget(event, round.id, command.memberId, command.replacementId)
+        : undefined
+      round.players[position] = command.replacementId
+      if (next) next.players[next.players.indexOf(command.replacementId)] = command.memberId
+      const name = (id: string) => event.members.find((member) => member.id === id)!.name
+      message = `${round.id} の出場者を変更: ${name(command.memberId)} → ${name(command.replacementId)}${next ? `（${next.id} の出番も交換）` : '（以降の対戦は変更なし）'}`
       break
     }
     case 'swap': {
