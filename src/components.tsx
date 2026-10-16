@@ -1292,7 +1292,7 @@ export function Admin({
         </p>
       ) : (
         <section className="result-section">
-          {lastResult && (
+          {resultsOnly && lastResult && (
             <button
               className="button"
               disabled={disabled}
@@ -1310,7 +1310,7 @@ export function Admin({
             <label className="field">
               対戦
               <select
-                aria-label="入力する対戦"
+                aria-label={resultsOnly ? '入力する対戦' : '変更する対戦'}
                 value={round.id}
                 disabled={disabled}
                 onChange={(change) => {
@@ -1326,7 +1326,7 @@ export function Admin({
                 ))}
               </select>
             </label>
-            <div className="game-tabs" role="tablist" aria-label="結果の本数">
+            {resultsOnly && <div className="game-tabs" role="tablist" aria-label="結果の本数">
               {round.results.map((result, index) => (
                 <button
                   key={index}
@@ -1339,7 +1339,7 @@ export function Admin({
                   {index + 1}本目
                 </button>
               ))}
-            </div>
+            </div>}
           </div>
           {!resultsOnly && (
             <SubstitutePlayers key={`${round.id}-${round.players.join(':')}`} event={event}
@@ -1349,7 +1349,7 @@ export function Admin({
                 setFormVersion((value) => value + 1)
               }} />
           )}
-          <ResultForm
+          {resultsOnly && <ResultForm
             key={`${round.id}-${game}-${formVersion}`}
             event={event}
             roundId={round.id}
@@ -1357,7 +1357,7 @@ export function Admin({
             store={store}
             disabled={disabled}
             onSaved={next}
-          />
+          />}
         </section>
       )}
       {!resultsOnly && event.phase !== 'finished' && (

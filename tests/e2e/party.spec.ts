@@ -11,9 +11,11 @@ async function start(page: Page) {
   await page.getByRole('button', { name: '司会', exact: true }).click()
   await page.getByRole('radio', { name: /^1本/ }).check()
   await page.getByRole('button', { name: '保存して開始' }).click()
+  await page.getByRole('button', { name: '進行', exact: true }).click()
   await expect(page.getByRole('button', { name: '結果を保存' })).toBeVisible()
 }
 async function ranks(page: Page, values = ['1', '2', '3', '4']) {
+  await page.getByRole('button', { name: '進行', exact: true }).click()
   for (const checkbox of await page.locator('.result-tie input').all())
     await checkbox.uncheck()
   const ordered = [0, 1, 2, 3].sort((first, second) => Number(values[first]) - Number(values[second]))
@@ -40,8 +42,33 @@ async function expectResultAttributes(page: Page, attribute: string, values: str
   )).toEqual(values)
 }
 
+test('4タブ構成で進行に結果入力を統合し司会と投影には重複表示しない', async ({ page }, testInfo) => {
+  await start(page)
+  await expect(page.locator('.tabs button')).toHaveText(['進行', '順位', '対戦表', '司会'])
+  await expect(page.getByRole('heading', { name: '第1対戦', exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: '結果を保存', exact: true })).toHaveCount(1)
+  await page.screenshot({ path: testInfo.outputPath('progress-input.png'), fullPage: true })
+  await ranks(page)
+  await page.getByRole('button', { name: '結果を保存', exact: true }).click()
+  await page.getByRole('button', { name: '直前の入力を修正' }).click()
+  await expect(page.getByRole('button', { name: '結果を訂正', exact: true })).toBeVisible()
+  await page.getByRole('button', { name: '司会', exact: true }).click()
+  await expect(page.locator('.result-player')).toHaveCount(0)
+  await expect(page.getByRole('button', { name: '結果を訂正', exact: true })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: '直前の入力を修正' })).toHaveCount(0)
+  await expect(page.getByRole('combobox', { name: '変更する対戦' })).toBeVisible()
+  await expect(page.getByRole('button', { name: '休憩', exact: true })).toBeVisible()
+  await page.goto('/?demo=1&view=viewer')
+  await expect(page.locator('.tabs button')).toHaveText(['進行', '順位', '対戦表'])
+  await expect(page.getByRole('button', { name: '結果を保存', exact: true })).toBeVisible()
+  await page.goto('/?demo=1&display=1')
+  await expect(page.getByRole('button', { name: '結果を保存', exact: true })).toHaveCount(0)
+  await expect(page.locator('.result-player')).toHaveCount(0)
+})
+
 test('ドラッグ順位・同率・取消・横並び表示', async ({ page }, testInfo) => {
   await start(page)
+  await page.getByRole('button', { name: '1Pを並べ替え', exact: true }).scrollIntoViewIfNeeded()
   const first = await page.getByRole('button', { name: '1Pを並べ替え', exact: true }).boundingBox()
   const last = await page.getByRole('button', { name: '4Pを並べ替え', exact: true }).boundingBox()
   expect(first).not.toBeNull()
@@ -101,7 +128,7 @@ test('参加者リンクから入力し直前の入力を修正できる', async
   await start(page)
   await page.goto('/?demo=1&view=viewer')
   await expect(page.getByRole('button', { name: '司会', exact: true })).toHaveCount(0)
-  await page.getByRole('button', { name: '結果入力', exact: true }).click()
+  await page.getByRole('button', { name: '進行', exact: true }).click()
   await expect(page.getByRole('button', { name: '順位を確定', exact: true })).toHaveCount(0)
   await expect(page.getByRole('button', { name: '対戦を追加', exact: true })).toHaveCount(0)
   await expect(page.getByRole('button', { name: '新しいイベント', exact: true })).toHaveCount(0)
@@ -137,6 +164,7 @@ test('一括入力と人数・予定対戦数の設定', async ({ page }) => {
   await page.getByRole('spinbutton', { name: '予定対戦数' }).fill('2')
   await page.getByRole('radio', { name: /^1本/ }).check()
   await page.getByRole('button', { name: '保存して開始' }).click()
+  await page.getByRole('button', { name: '進行', exact: true }).click()
   await expect(
     page.getByRole('button', { name: '結果を保存', exact: true }),
   ).toBeVisible()
@@ -191,6 +219,7 @@ test('未記録を残して途中終了・未参加者を表彰しない', async
   ).toBeDisabled()
   await ranks(page)
   await page.getByRole('button', { name: '結果を保存', exact: true }).click()
+  await page.getByRole('button', { name: '司会', exact: true }).click()
   await page.getByRole('button', { name: '途中終了', exact: true }).click()
   await expect(page.getByRole('dialog')).toContainText('未参加11人')
   await page
@@ -216,6 +245,7 @@ test('記録を保持して対戦を延長できる', async ({ page }) => {
     (cacheKey) => JSON.parse(localStorage.getItem(cacheKey)!).rounds,
     key,
   )
+  await page.getByRole('button', { name: '司会', exact: true }).click()
   await page.getByRole('spinbutton', { name: '追加対戦数' }).fill('2')
   await page.getByRole('button', { name: '対戦を追加', exact: true }).click()
   const event = await page.evaluate(
@@ -240,17 +270,20 @@ test('予定分を完了した後も確定前なら延長できる', async ({ pa
   await page.getByRole('button', { name: '保存して開始' }).click()
   await ranks(page)
   await page.getByRole('button', { name: '結果を保存', exact: true }).click()
+  await page.getByRole('button', { name: '司会', exact: true }).click()
   await expect(
     page.getByRole('button', { name: '順位を確定', exact: true }),
   ).toBeEnabled()
   await page.getByRole('spinbutton', { name: '追加対戦数' }).fill('1')
   await page.getByRole('button', { name: '対戦を追加', exact: true }).click()
   await expect(
-    page.getByRole('combobox', { name: '入力する対戦' }),
+    page.getByRole('combobox', { name: '変更する対戦' }),
   ).toHaveValue('round-2')
   await expect(
     page.getByRole('button', { name: '順位を確定', exact: true }),
   ).toBeDisabled()
+  await page.getByRole('button', { name: '進行', exact: true }).click()
+  await expect(page.getByRole('combobox', { name: '入力する対戦' })).toHaveValue('round-2')
   const event = await page.evaluate(
     (cacheKey) => JSON.parse(localStorage.getItem(cacheKey)!),
     key,
@@ -342,6 +375,7 @@ test('全15対戦から表彰・同率優勝・確定ロック', async ({ page }
     await ranks(page, ['1', '1', '1', '1'])
     await page.getByRole('button', { name: '結果を保存', exact: true }).click()
   }
+  await page.getByRole('button', { name: '司会', exact: true }).click()
   await expect(page.getByRole('button', { name: '順位を確定' })).toBeEnabled()
   await page.getByRole('button', { name: '順位を確定' }).click()
   await page.getByRole('button', { name: 'この順位で確定する' }).click()
@@ -366,6 +400,7 @@ test('バックアップとCSVの書き出し', async ({ page }) => {
   await start(page)
   await ranks(page)
   await page.getByRole('button', { name: '結果を保存', exact: true }).click()
+  await page.getByRole('button', { name: '司会', exact: true }).click()
   await page.getByText('結果の保存・読込', { exact: true }).click()
   const downloaded = page.waitForEvent('download')
   await page.getByRole('button', { name: 'バックアップ', exact: true }).click()
@@ -474,6 +509,7 @@ test('バックアップ復元', async ({ page }) => {
       JSON.stringify({ format: 'party-night-v1', event, unsent: null }),
     ),
   })
+  await page.getByRole('button', { name: '進行', exact: true }).click()
   await expect(
     page.getByRole('button', { name: '結果を保存', exact: true }),
   ).toBeVisible()
@@ -514,11 +550,13 @@ test('出場者を交代して記録し、以降の出番も交換する', async
   const memberId = before.rounds[0].players[0]
   const replacementId = before.rounds[1].players[0]
   const replacementName = before.members.find((member: { id: string }) => member.id === replacementId).name
+  await page.getByRole('button', { name: '司会', exact: true }).click()
   await page.getByText('この対戦の出場者を変更', { exact: true }).click()
   await page.getByRole('combobox', { name: '交代する参加者', exact: true }).selectOption(memberId)
   await page.getByRole('combobox', { name: '代わりに出場する参加者', exact: true }).selectOption(replacementId)
   await expect(page.getByText('第2対戦の出番も交換します。', { exact: true })).toBeVisible()
   await page.getByRole('button', { name: '出場者を変更', exact: true }).click()
+  await page.getByRole('button', { name: '進行', exact: true }).click()
   await expect(page.locator('.result-player[data-seat="0"] strong')).toHaveText(replacementName)
   await ranks(page)
   await page.getByRole('button', { name: '結果を保存', exact: true }).click()
@@ -529,7 +567,8 @@ test('出場者を交代して記録し、以降の出番も交換する', async
   expect(recorded.rounds.slice(2)).toEqual(before.rounds.slice(2))
   expect(standings(recorded).find((member) => member.id === replacementId)?.score).toBe(4)
   expect(standings(recorded).find((member) => member.id === memberId)?.played).toBe(0)
-  await page.getByRole('combobox', { name: '入力する対戦' }).selectOption('round-1')
+  await page.getByRole('button', { name: '司会', exact: true }).click()
+  await page.getByRole('combobox', { name: '変更する対戦' }).selectOption('round-1')
   await page.getByText('この対戦の出場者を変更', { exact: true }).click()
   await expect(page.getByText('1本でも記録済みの対戦は出場者を変更できません。', { exact: true })).toBeVisible()
   await expect(page.getByRole('button', { name: '出場者を変更', exact: true })).toHaveCount(0)
@@ -538,7 +577,7 @@ test('出場者を交代して記録し、以降の出番も交換する', async
 test('別タブの出場者変更で順位入力を保持し、以降の組み合わせを変更せず交代する', async ({ page, context }) => {
   await start(page)
   const before = await page.evaluate((cacheKey) => JSON.parse(localStorage.getItem(cacheKey)!), key)
-  await page.getByRole('button', { name: '結果入力', exact: true }).click()
+  await page.getByRole('button', { name: '進行', exact: true }).click()
   await page.getByRole('textbox', { name: 'ゲーム名' }).fill('未保存の入力')
   const other = await context.newPage()
   await other.goto('/?demo=1')
@@ -562,6 +601,7 @@ test('別タブの出場者変更で順位入力を保持し、以降の組み�
 
 test('休憩・再開と出番交換', async ({ page }) => {
   await start(page)
+  await page.getByRole('button', { name: '司会', exact: true }).click()
   await page.getByRole('button', { name: '休憩', exact: true }).click()
   await expect(page.getByText('休憩中', { exact: true })).toBeVisible()
   await page.getByRole('button', { name: '再開', exact: true }).click()

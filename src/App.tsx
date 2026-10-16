@@ -39,7 +39,6 @@ const phaseNames = {
 }
 const tabs = [
   { id: 'queue', label: '進行', icon: Gamepad2 },
-  { id: 'results', label: '結果入力', icon: ListOrdered },
   { id: 'ranking', label: '順位', icon: ListOrdered },
   { id: 'schedule', label: '対戦表', icon: UsersRound },
   { id: 'admin', label: '司会', icon: Settings2 },
@@ -275,9 +274,7 @@ export default function App() {
               <nav className="tabs" aria-label="表示切替">
                 {tabs
                   .filter(
-                    (candidate) =>
-                      (candidate.id !== 'admin' || store.editable) &&
-                      (candidate.id !== 'results' || store.resultsEditable),
+                    (candidate) => candidate.id !== 'admin' || store.editable,
                   )
                   .map((candidate) => (
                     <button
@@ -331,9 +328,12 @@ export default function App() {
               </div>
             )}
             {projection || visibleTab === 'queue' ? (
-              <Queue event={event} self={self} projection={projection} />
-            ) : visibleTab === 'results' ? (
-              <Admin store={store} state={state} resultsOnly />
+              <>
+                <Queue event={event} self={self} projection={projection} />
+                {!projection && store.resultsEditable && (
+                  <Admin store={store} state={state} resultsOnly />
+                )}
+              </>
             ) : visibleTab === 'ranking' ? (
               <section>
                 <div className="section-heading">

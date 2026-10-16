@@ -201,6 +201,9 @@
     grid-template-columns: minmax(0, 1fr) 256px;
     gap: 36px;
   }
+  .queue-layout + .admin {
+    margin-top: 32px;
+  }
   .stage {
     min-width: 0;
   }
