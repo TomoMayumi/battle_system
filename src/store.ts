@@ -144,6 +144,11 @@ export class PartyStore {
       params.get('display') !== '1'
     )
   }
+  get resultsEditable() {
+    return !!this.state.event &&
+      ['playing', 'paused'].includes(this.state.event.phase) &&
+      params.get('display') !== '1'
+  }
   start = () => {
     const generation = ++this.generation
     const disposers: (() => void)[] = []
@@ -236,12 +241,14 @@ export class PartyStore {
   }
   submit = async (command: Command): Promise<boolean> => {
     try {
-      if (!this.editable || !this.state.event || !this.state.user)
-        throw new Error('司会者の権限がありません。')
+      if (!this.state.event || !(command.type === 'result' ? this.resultsEditable : this.editable))
+        throw new Error('この操作の権限がありません。')
       if (this.state.pending || this.state.saving)
         throw new Error('未送信の入力を処理してから続けてください。')
       const source = this.state.event
-      const actor = this.state.user.uid === source.ownerId ? '主催者' : '司会'
+      const actor = this.editable
+        ? this.state.user?.uid === source.ownerId ? '主催者' : '司会'
+        : '参加者'
       const event = applyCommand(source, command, actor)
       if (!cloudMode) {
         const stored = readCache()
@@ -258,7 +265,7 @@ export class PartyStore {
         baseRevision: source.revision,
         command,
         actor,
-        uid: this.state.user.uid,
+        uid: command.type === 'result' ? '' : this.state.user!.uid,
       }
       localStorage.setItem(pendingKey, JSON.stringify(pending))
       this.update({ event, pending, error: '' })
@@ -272,7 +279,7 @@ export class PartyStore {
     const pending = this.state.pending
     if (!pending || !eventId || !this.services || this.state.saving)
       return false
-    if (this.state.user?.uid !== pending.uid) {
+    if (pending.command.type !== 'result' && this.state.user?.uid !== pending.uid) {
       this.report(
         new Error('入力した司会者のアカウントでログインしてください。'),
       )

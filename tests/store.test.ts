@@ -78,6 +78,37 @@ async function startStore() {
 }
 
 describe('共有保存と通信障害', () => {
+  it('ログインなしの参加者は結果を入力・訂正でき、司会操作はできない', async () => {
+    mocks.observeIdentity.mockImplementation((listener) => {
+      listener(null)
+      return () => {}
+    })
+    const { PartyStore } = await import('../src/store')
+    const store = new PartyStore()
+    const stop = store.start()
+    await vi.waitFor(() => expect(store.getSnapshot().loading).toBe(false))
+    expect(store.editable).toBe(false)
+    expect(store.resultsEditable).toBe(true)
+    const command = { type: 'result' as const, roundId: 'round-1', game: 0,
+      result: { ranks: [1, 2, 3, 4], title: 'ミニゲーム' }, expected: null }
+    expect(await store.submit(command)).toBe(true)
+    expect(remote.resultEdit).toEqual({ roundIndex: 0, game: 0 })
+    expect(await store.submit({ ...command, expected: command.result,
+      result: { ranks: [4, 3, 2, 1], title: '訂正' } })).toBe(true)
+    expect(remote.rounds[0].results[0]?.title).toBe('訂正')
+    expect(await store.submit({ type: 'awards', awards: 1 })).toBe(false)
+    network.onLine = false
+    expect(await store.submit({ ...command, game: 1 })).toBe(false)
+    expect(store.getSnapshot().pending).not.toBeNull()
+    network.onLine = true
+    expect(await store.retry()).toBe(true)
+    expect(remote.rounds[0].results[1]?.title).toBe('ミニゲーム')
+    remote = applyCommand(remote, { type: 'end-early' })
+    callbacks.forEach((listener) => listener(remote, false))
+    expect(store.resultsEditable).toBe(false)
+    expect(await store.submit(command)).toBe(false)
+    stop()
+  })
   it('保存後に未送信データが消え、1度だけ更新される', async () => {
     const { store, stop } = await startStore()
     expect(await store.submit({ type: 'awards', awards: 1 })).toBe(true)

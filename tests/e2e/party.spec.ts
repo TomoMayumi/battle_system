@@ -20,6 +20,36 @@ async function ranks(page: Page, values = ['1', '2', '3', '4']) {
       .selectOption(values[index])
 }
 
+test('参加者リンクから入力し直前の入力を修正できる', async ({ page }) => {
+  await start(page)
+  await page.goto('/?demo=1&view=viewer')
+  await expect(page.getByRole('button', { name: '司会', exact: true })).toHaveCount(0)
+  await page.getByRole('button', { name: '結果入力', exact: true }).click()
+  await expect(page.getByRole('button', { name: '順位を確定', exact: true })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: '対戦を追加', exact: true })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: '新しいイベント', exact: true })).toHaveCount(0)
+  await ranks(page)
+  await page.getByRole('button', { name: '結果を保存', exact: true }).click()
+  await expect(page.getByRole('combobox', { name: '入力する対戦' })).toHaveValue('round-2')
+  await page.getByRole('button', { name: '直前の入力を修正' }).click()
+  await expect(page.getByRole('combobox', { name: '入力する対戦' })).toHaveValue('round-1')
+  await expect(page.getByRole('combobox', { name: '1Pの順位' })).toHaveValue('1')
+  await ranks(page, ['4', '3', '2', '1'])
+  await page.getByRole('button', { name: '結果を訂正', exact: true }).click()
+  const event = await page.evaluate(
+    (cacheKey) => JSON.parse(localStorage.getItem(cacheKey)!), key,
+  )
+  expect(event.rounds[0].results[0].ranks).toEqual([4, 3, 2, 1])
+  expect(event.rounds[1].results[0]).toBeNull()
+  await ranks(page)
+  await page.getByRole('button', { name: '結果を保存', exact: true }).click()
+  await page.getByRole('combobox', { name: '入力する対戦' }).selectOption('round-1')
+  await ranks(page)
+  await page.getByRole('button', { name: '結果を訂正', exact: true }).click()
+  await page.getByRole('button', { name: '直前の入力を修正' }).click()
+  await expect(page.getByRole('combobox', { name: '入力する対戦' })).toHaveValue('round-1')
+})
+
 test('一括入力と人数・予定対戦数の設定', async ({ page }) => {
   await page.goto('/?demo=1')
   await page.getByRole('button', { name: '司会', exact: true }).click()

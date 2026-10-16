@@ -43,6 +43,75 @@ afterAll(async () => {
 })
 
 describe('Firestore権限', () => {
+  it('未ログインで1本ずつ入力・訂正・取消でき、同着にも対応する', async () => {
+    let event = applyCommand(createEvent('owner'), { type: 'phase', phase: 'playing' })
+    await environment.withSecurityRulesDisabled(async (context) =>
+      setDoc(doc(context.firestore(), 'events', id), event),
+    )
+    const reference = doc(environment.unauthenticatedContext().firestore(), 'events', id)
+    for (const result of [
+      { title: '入力', ranks: [1, 2, 3, 4] },
+      { title: '訂正', ranks: [1, 1, 3, 4] },
+      null,
+    ]) {
+      event = applyCommand(event, { type: 'result', roundId: 'round-1', game: 0, result }, '参加者')
+      await assertSucceeds(setDoc(reference, event))
+    }
+    event = applyCommand(event, { type: 'result', roundId: 'round-2', game: 1,
+      result: { title: '別の本', ranks: [1, 1, 1, 1] } }, '参加者')
+    await assertSucceeds(setDoc(reference, event))
+  })
+  it('公開入力による設定・対戦表・他の結果・履歴の改変と不正な順位を拒否', async () => {
+    const before = applyCommand(createEvent('owner'), { type: 'phase', phase: 'playing' })
+    await environment.withSecurityRulesDisabled(async (context) =>
+      setDoc(doc(context.firestore(), 'events', id), before),
+    )
+    const next = applyCommand(before, { type: 'result', roundId: 'round-1', game: 0,
+      result: { title: '入力', ranks: [1, 2, 3, 4] } }, '参加者')
+    const reference = doc(environment.unauthenticatedContext().firestore(), 'events', id)
+    const changes = [
+      { phase: 'finished' }, { awards: 1 }, { ownerId: 'stranger' },
+      { editorIds: ['owner', 'stranger'] }, { title: '変更' },
+      { members: before.members.slice(0, 4) }, { gamesPerRound: 1 },
+      { revision: before.revision }, { endedEarly: true },
+      { resultEdit: { roundIndex: 99, game: 0 } },
+      { history: [{ at: next.updatedAt, actor: '参加者', message: '履歴置換' }] },
+    ]
+    for (const change of changes) await assertFails(setDoc(reference, { ...next, ...change }))
+    for (const tamper of [
+      (event: typeof next) => { event.rounds[0].players.reverse() },
+      (event: typeof next) => { event.rounds[0].id = '変更' },
+      (event: typeof next) => { event.rounds[0].results[1] = event.rounds[0].results[0] },
+      (event: typeof next) => { event.rounds[1].results[0] = event.rounds[0].results[0] },
+      (event: typeof next) => { event.rounds.reverse() },
+      (event: typeof next) => { event.rounds[0].results[0]!.ranks = [1, 1, 2, 4] },
+      (event: typeof next) => { event.rounds[0].results[0]!.ranks = [0, 2, 3, 4] },
+      (event: typeof next) => { event.rounds[0].results[0]!.title = '' },
+    ]) {
+      const changed = structuredClone(next)
+      tamper(changed)
+      await assertFails(setDoc(reference, changed))
+    }
+    await assertSucceeds(setDoc(reference, next))
+    await assertFails(setDoc(reference, next))
+  })
+  it('公開入力でも100件の履歴上限と確定後の不変性を守る', async () => {
+    let event = applyCommand(createEvent('owner'), { type: 'phase', phase: 'playing' })
+    for (let index = 0; index < 101; index++)
+      event = applyCommand(event, { type: 'result', roundId: 'round-1', game: 0,
+        result: { title: `入力${index}`, ranks: [1, 2, 3, 4] } }, '参加者',
+        new Date(Date.UTC(2026, 9, 16, 0, 0, index)).toISOString())
+    await environment.withSecurityRulesDisabled(async (context) =>
+      setDoc(doc(context.firestore(), 'events', id), event),
+    )
+    const reference = doc(environment.unauthenticatedContext().firestore(), 'events', id)
+    const next = applyCommand(event, { type: 'result', roundId: 'round-1', game: 0,
+      result: { title: '最新', ranks: [4, 3, 2, 1] } }, '参加者')
+    await assertSucceeds(setDoc(reference, next))
+    const finished = applyCommand(next, { type: 'end-early' })
+    await assertSucceeds(setDoc(doc(identity('owner'), 'events', id), finished))
+    await assertFails(setDoc(reference, { ...next, revision: finished.revision + 1, phase: 'finished' }))
+  })
   it.each([4, 10, 16, 64])(
     '%i人・可変対戦数のイベントを作成できる',
     async (count) => {

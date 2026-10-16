@@ -6,7 +6,7 @@ service cloud.firestore {
     }
     function validData(data) {
       return data.keys().hasAll(['schemaVersion', 'title', 'ownerId', 'editorIds', 'revision', 'phase', 'gamesPerRound', 'awards', 'members', 'rounds', 'updatedAt', 'history'])
-        && data.keys().hasOnly(['schemaVersion', 'title', 'ownerId', 'editorIds', 'revision', 'phase', 'gamesPerRound', 'awards', 'members', 'rounds', 'updatedAt', 'history', 'endedEarly'])
+        && data.keys().hasOnly(['schemaVersion', 'title', 'ownerId', 'editorIds', 'revision', 'phase', 'gamesPerRound', 'awards', 'members', 'rounds', 'updatedAt', 'history', 'endedEarly', 'resultEdit'])
         && data.schemaVersion == 1
         && data.title is string && data.title.size() > 0 && data.title.size() <= 60
         && data.ownerId is string && data.ownerId.size() > 0 && data.ownerId.size() <= 128
@@ -27,6 +27,48 @@ service cloud.firestore {
         || (before == 'playing' && after in ['playing', 'paused', 'finished'])
         || (before == 'paused' && after in ['paused', 'playing', 'finished']);
     }
+    function validRank(ranks, index) {
+      return ranks[index] is int && ranks[index] >= 1 && ranks[index] <= 4
+        && ranks[index] == 1
+          + (ranks[0] < ranks[index] ? 1 : 0)
+          + (ranks[1] < ranks[index] ? 1 : 0)
+          + (ranks[2] < ranks[index] ? 1 : 0)
+          + (ranks[3] < ranks[index] ? 1 : 0);
+    }
+    function validResult(result) {
+      return result == null || (result is map
+        && result.keys().hasAll(['ranks', 'title']) && result.keys().hasOnly(['ranks', 'title'])
+        && result.title is string && result.title.size() > 0 && result.title.size() <= 60
+        && result.ranks is list && result.ranks.size() == 4
+        && validRank(result.ranks, 0) && validRank(result.ranks, 1)
+        && validRank(result.ranks, 2) && validRank(result.ranks, 3));
+    }
+    function publicRoundChange(before, after, edit) {
+      let previous = before.rounds[edit.roundIndex];
+      let next = after.rounds[edit.roundIndex];
+      return next.diff(previous).affectedKeys().hasOnly(['results'])
+        && next.results is list && next.results.size() == before.gamesPerRound
+        && validResult(next.results[edit.game])
+        && (before.gamesPerRound == 1 || next.results[1 - edit.game] == previous.results[1 - edit.game])
+        && before.rounds.removeAll([previous]) == after.rounds.removeAll([next]);
+    }
+    function publicResultChange(before, after) {
+      let edit = after.resultEdit;
+      let entry = after.history[after.history.size() - 1];
+      return before.phase in ['playing', 'paused']
+        && after.diff(before).affectedKeys().hasOnly(['rounds', 'revision', 'updatedAt', 'history', 'resultEdit'])
+        && edit is map && edit.keys().hasAll(['roundIndex', 'game']) && edit.keys().hasOnly(['roundIndex', 'game'])
+        && edit.roundIndex is int && edit.roundIndex >= 0 && edit.roundIndex < before.rounds.size()
+        && edit.game is int && edit.game >= 0 && edit.game < before.gamesPerRound
+        && after.rounds.size() == before.rounds.size()
+        && publicRoundChange(before, after, edit)
+        && entry is map && entry.keys().hasAll(['at', 'actor', 'message']) && entry.keys().hasOnly(['at', 'actor', 'message'])
+        && entry.at == after.updatedAt && entry.actor == '参加者'
+        && entry.message is string && entry.message.size() <= 400
+        && ((before.history.size() < 100 && after.history == before.history.concat([entry]))
+          || (before.history.size() == 100 && after.history.size() == 100
+            && after.history == before.history.removeAll([before.history[0]]).concat([entry])));
+    }
     match /events/{eventId} {
       allow get: if eventId.matches('^[a-f0-9]{32}$');
       allow list: if false;
@@ -46,6 +88,10 @@ service cloud.firestore {
           request.resource.data.members == resource.data.members
           && request.resource.data.gamesPerRound == resource.data.gamesPerRound
           && request.resource.data.title == resource.data.title));
+      allow update: if eventId.matches('^[a-f0-9]{32}$')
+        && validData(request.resource.data)
+        && request.resource.data.revision == resource.data.revision + 1
+        && publicResultChange(resource.data, request.resource.data);
       allow delete: if false;
     }
   }

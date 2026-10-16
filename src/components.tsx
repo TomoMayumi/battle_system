@@ -6,6 +6,7 @@ import {
   ChevronRight,
   Download,
   Gamepad2,
+  History,
   ClipboardPaste,
   List,
   Plus,
@@ -1030,9 +1031,11 @@ export function Backups({
 export function Admin({
   store,
   state,
+  resultsOnly = false,
 }: {
   store: PartyStore
   state: StoreState
+  resultsOnly?: boolean
 }) {
   const event = state.event!
   const [selectedRound, setSelectedRound] = useState(
@@ -1057,6 +1060,11 @@ export function Admin({
     event.rounds.find((candidate) => candidate.id === selectedRound) ??
     event.rounds[0]
   const disabled = state.saving || !!state.pending || event.phase === 'finished'
+  const lastResult = event.resultEdit && event.rounds[event.resultEdit.roundIndex]
+    ? { roundId: event.rounds[event.resultEdit.roundIndex].id, game: event.resultEdit.game }
+    : event.rounds.flatMap((candidate) =>
+    candidate.results.flatMap((result, index) => result ? [{ roundId: candidate.id, game: index }] : []),
+  ).at(-1)
   const next = () => {
     setFormVersion((value) => value + 1)
     const latest = store.getSnapshot().event!
@@ -1077,11 +1085,11 @@ export function Admin({
     <section className="admin">
       <div className="section-heading">
         <div>
-          <span className="eyebrow">HOST DESK</span>
-          <h2>司会</h2>
+          <span className="eyebrow">{resultsOnly ? 'RESULTS' : 'HOST DESK'}</span>
+          <h2>{resultsOnly ? '結果入力' : '司会'}</h2>
         </div>
         <div className="phase-actions">
-          {event.phase !== 'finished' && event.phase !== 'setup' && (
+          {!resultsOnly && event.phase !== 'finished' && event.phase !== 'setup' && (
             <>
               <button
                 className="button primary"
@@ -1136,6 +1144,20 @@ export function Admin({
         </p>
       ) : (
         <section className="result-section">
+          {lastResult && (
+            <button
+              className="button"
+              disabled={disabled}
+              onClick={() => {
+                setSelectedRound(lastResult.roundId)
+                setGame(lastResult.game)
+                setFormVersion((value) => value + 1)
+              }}
+            >
+              <History size={18} />
+              直前の入力を修正
+            </button>
+          )}
           <div className="result-picker">
             <label className="field">
               対戦
@@ -1182,7 +1204,7 @@ export function Admin({
           />
         </section>
       )}
-      {event.phase !== 'finished' && (
+      {!resultsOnly && event.phase !== 'finished' && (
         <>
           {event.phase !== 'setup' && (
             <section className="extension-section">
@@ -1259,7 +1281,7 @@ export function Admin({
           </details>
         </>
       )}
-      <details className="admin-details">
+      {!resultsOnly && <details className="admin-details">
         <summary>
           <Download size={18} />
           結果の保存・読込
@@ -1280,8 +1302,8 @@ export function Admin({
           <Play size={16} />
           新しいイベント
         </button>
-      </details>
-      {state.cloud &&
+      </details>}
+      {!resultsOnly && state.cloud &&
         state.user?.uid === event.ownerId &&
         event.phase !== 'finished' && (
           <details className="admin-details">

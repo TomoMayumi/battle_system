@@ -38,6 +38,10 @@ export const eventSchema = z
     rounds: z.array(roundSchema).min(1).max(MAX_ROUNDS),
     endedEarly: z.boolean().optional(),
     updatedAt: z.string().datetime(),
+    resultEdit: z.object({
+      roundIndex: z.number().int().min(0).max(MAX_ROUNDS - 1),
+      game: z.number().int().min(0).max(1),
+    }).strict().optional(),
     history: z
       .array(
         z
@@ -464,6 +468,7 @@ export function applyCommand(
           'この結果は別の司会者が変更しました。対戦を選び直して確認してください。',
         )
       round.results[command.game] = command.result
+      event.resultEdit = { roundIndex: event.rounds.indexOf(round), game: command.game }
       message = `${round.id} ${command.game + 1}本目: ${previous ? `${previous.ranks.join('/')} → ` : ''}${command.result ? command.result.ranks.join('/') : '取消'}${command.result ? ` (${command.result.title})` : ''}`
       break
     }
