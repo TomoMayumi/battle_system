@@ -6,6 +6,8 @@ import {
   csv,
   parseEvent,
   points,
+  ranksFromOrder,
+  resultOrder,
   schedule,
   standings,
 } from '../src/domain'
@@ -41,6 +43,19 @@ describe('公平な対戦表', () => {
 })
 
 describe('採点・保存検証', () => {
+  it('並び順と同率を元の席順の順位へ変換し、訂正時にも復元できる', () => {
+    expect(ranksFromOrder([2, 0, 3, 1], [true, false, false])).toEqual([1, 4, 1, 3])
+    expect(ranksFromOrder([0, 1, 2, 3], [false, true, false])).toEqual([1, 2, 2, 4])
+    expect(ranksFromOrder([3, 2, 1, 0], [true, true, true])).toEqual([1, 1, 1, 1])
+    for (let mask = 0; mask < 8; mask++) {
+      const ranks = ranksFromOrder([3, 1, 0, 2], [0, 1, 2].map((bit) => Boolean(mask & (1 << bit))))
+      const restored = resultOrder(ranks)
+      expect(ranksFromOrder(restored.order, restored.ties)).toEqual(ranks)
+      expect(points(ranks).reduce((sum, value) => sum + value, 0)).toBe(10)
+    }
+    expect(() => ranksFromOrder([0, 0, 2, 3], [false, false, false])).toThrow()
+    expect(() => resultOrder([1, 1, 2, 3])).toThrow()
+  })
   it('同着でも合計10点になる', () => {
     expect(points([1, 2, 3, 4])).toEqual([4, 3, 2, 1])
     expect(points([1, 1, 3, 4])).toEqual([3.5, 3.5, 2, 1])

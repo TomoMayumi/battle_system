@@ -1,11 +1,17 @@
 import { useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
+import { DndContext, KeyboardSensor, PointerSensor, closestCenter, useSensor, useSensors } from '@dnd-kit/core'
+import { SortableContext, arrayMove, horizontalListSortingStrategy, sortableKeyboardCoordinates, useSortable } from '@dnd-kit/sortable'
+import { CSS } from '@dnd-kit/utilities'
 import {
+  ArrowLeft,
+  ArrowRight,
   Award,
   Check,
   ChevronRight,
   Download,
   Gamepad2,
+  GripVertical,
   History,
   ClipboardPaste,
   List,
@@ -33,8 +39,9 @@ import {
   currentRound,
   parseEvent,
   points,
+  ranksFromOrder,
+  resultOrder,
   standings,
-  validRanks,
 } from './domain'
 import type { Member, PartyEvent, Result } from './domain'
 import type { PartyStore, StoreState } from './store'
@@ -743,6 +750,61 @@ function Setup({
   )
 }
 
+function ResultPlayer({
+  seat, name, rank, score, position, tied, disabled, onTie, onMove,
+}: {
+  seat: number
+  name: string
+  rank: number
+  score: number
+  position: number
+  tied: boolean
+  disabled: boolean
+  onTie: (checked: boolean) => void
+  onMove: (direction: number) => void
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: seat, disabled })
+  return (
+    <div
+      ref={setNodeRef}
+      className={`result-player${isDragging ? ' result-dragging' : ''}`}
+      data-seat={seat}
+      data-rank={rank}
+      style={{ transform: CSS.Transform.toString(transform), transition }}
+    >
+      <div className="result-position">
+        <span className="result-rank">{rank}<small>位</small></span>
+        <span className="player-badge">{seat + 1}P</span>
+      </div>
+      <strong>{name}</strong>
+      <span className="result-points">{score}pt</span>
+      <div className="result-move">
+        <button type="button" className="icon-button" disabled={disabled || position === 0}
+          aria-label={`${seat + 1}Pを上位へ`} title="上位へ" onClick={() => onMove(-1)}>
+          <ArrowLeft size={16} />
+        </button>
+        <button type="button" className="icon-button result-grip" {...attributes} {...listeners}
+          disabled={disabled} aria-label={`${seat + 1}Pを並べ替え`} title="順位を並べ替え">
+          <GripVertical size={20} />
+        </button>
+        <button type="button" className="icon-button" disabled={disabled || position === 3}
+          aria-label={`${seat + 1}Pを下位へ`} title="下位へ" onClick={() => onMove(1)}>
+          <ArrowRight size={16} />
+        </button>
+      </div>
+      <div className="result-tie">
+        {position > 0 && (
+          <label title="前の人と同率">
+            <input type="checkbox" checked={tied} disabled={disabled}
+              aria-label={`${seat + 1}Pを前の人と同率`} onChange={(change) => onTie(change.target.checked)} />
+            同率
+          </label>
+        )}
+      </div>
+    </div>
+  )
+}
+
 function ResultForm({
   event,
   roundId,
@@ -760,18 +822,30 @@ function ResultForm({
 }) {
   const round = event.rounds.find((candidate) => candidate.id === roundId)!
   const [original] = useState(round.results[game])
-  const [ranks, setRanks] = useState<string[]>(
-    original?.ranks.map(String) ?? ['', '', '', ''],
-  )
+  const [placement, setPlacement] = useState(() => resultOrder(original?.ranks ?? [1, 2, 3, 4]))
   const [title, setTitle] = useState(original?.title ?? 'ミニゲーム')
-  const numeric = ranks.map(Number)
-  const valid = ranks.every(Boolean) && validRanks(numeric)
-  const score = valid ? points(numeric) : null
+  const numeric = ranksFromOrder(placement.order, placement.ties)
+  const score = points(numeric)
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  )
+  const move = (from: number, to: number) => {
+    if (disabled || from === to || to < 0 || to > 3) return
+    setPlacement((previous) => {
+      const order = arrayMove(previous.order, from, to)
+      const ties = order.slice(1).map((seat, index) => {
+        const first = previous.order.indexOf(order[index])
+        const second = previous.order.indexOf(seat)
+        return Math.abs(first - second) === 1 && previous.ties[Math.min(first, second)]
+      })
+      return { order, ties }
+    })
+  }
   return (
     <form
       onSubmit={async (submission) => {
         submission.preventDefault()
-        if (!valid) return
         const result: Result = { ranks: numeric, title }
         if (
           await store.submit({
@@ -795,47 +869,32 @@ function ResultForm({
             onChange={(change) => setTitle(change.target.value)}
           />
         </label>
-        <div className="result-players">
-          {round.players.map((id, index) => (
-            <label className="result-player" data-seat={index} key={id}>
-              <span className="player-badge">{index + 1}P</span>
-              <strong>
-                {event.members.find((member) => member.id === id)?.name}
-              </strong>
-              <select
-                aria-label={`${index + 1}Pの順位`}
-                value={ranks[index]}
-                onChange={(change) =>
-                  setRanks(
-                    ranks.map((rank, position) =>
-                      position === index ? change.target.value : rank,
-                    ),
-                  )
-                }
-              >
-                <option value="">順位</option>
-                {[1, 2, 3, 4].map((rank) => (
-                  <option value={rank} key={rank}>
-                    {rank}位
-                  </option>
-                ))}
-              </select>
-              <span className="result-points">
-                {score ? `${score[index]}pt` : '-'}
-              </span>
-            </label>
-          ))}
-        </div>
-        {ranks.every(Boolean) && !valid && (
-          <p className="inline-error" role="alert">
-            同着の次の順位は飛ばしてください。例：1・1・3・4位。
-          </p>
-        )}
+        <DndContext sensors={sensors} collisionDetection={closestCenter}
+          accessibility={{ screenReaderInstructions: { draggable: 'スペースキーで選択し、左右キーで順位を移動。スペースキーで確定、Escapeキーで取消。' } }}
+          onDragEnd={({ active, over }) => {
+            if (over) move(placement.order.indexOf(Number(active.id)), placement.order.indexOf(Number(over.id)))
+          }}>
+          <SortableContext items={placement.order} strategy={horizontalListSortingStrategy}>
+            <div className="result-players">
+              {placement.order.map((seat, position) => (
+                <ResultPlayer key={seat} seat={seat} position={position}
+                  name={event.members.find((member) => member.id === round.players[seat])?.name ?? ''}
+                  rank={numeric[seat]} score={score[seat]} disabled={disabled}
+                  tied={position > 0 && placement.ties[position - 1]}
+                  onMove={(direction) => move(position, position + direction)}
+                  onTie={(checked) => setPlacement((previous) => ({
+                    ...previous,
+                    ties: previous.ties.map((tie, index) => index === position - 1 ? checked : tie),
+                  }))} />
+              ))}
+            </div>
+          </SortableContext>
+        </DndContext>
         <div className="form-actions">
           <button
             className="button primary"
             type="submit"
-            disabled={!valid || !title.trim()}
+            disabled={!title.trim()}
           >
             <Save size={18} />
             {original ? '結果を訂正' : '結果を保存'}

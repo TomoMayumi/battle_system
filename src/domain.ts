@@ -240,6 +240,27 @@ export function validRanks(ranks: number[]) {
   )
 }
 
+export function resultOrder(ranks: number[]) {
+  if (!validRanks(ranks)) throw new Error('順位が不正です。')
+  const order = [0, 1, 2, 3].sort((first, second) => ranks[first] - ranks[second])
+  const ties = order.slice(1).map((seat, index) => ranks[seat] === ranks[order[index]])
+  return { order, ties }
+}
+
+export function ranksFromOrder(order: number[], ties: boolean[]) {
+  if (order.length !== 4 || new Set(order).size !== 4 ||
+    !order.every((seat) => Number.isInteger(seat) && seat >= 0 && seat < 4) ||
+    ties.length !== 3 || !ties.every((tie) => typeof tie === 'boolean'))
+    throw new Error('4人の並び順と同率を確認してください。')
+  const ranks = [0, 0, 0, 0]
+  let rank = 1
+  order.forEach((seat, index) => {
+    if (index > 0 && !ties[index - 1]) rank = index + 1
+    ranks[seat] = rank
+  })
+  return ranks
+}
+
 export function points(ranks: number[]) {
   if (!validRanks(ranks))
     throw new Error('同着の次の順位は飛ばしてください。例：1・1・3・4位。')

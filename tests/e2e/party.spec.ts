@@ -14,11 +14,88 @@ async function start(page: Page) {
   await expect(page.getByRole('button', { name: '結果を保存' })).toBeVisible()
 }
 async function ranks(page: Page, values = ['1', '2', '3', '4']) {
-  for (let index = 0; index < 4; index++)
-    await page
-      .getByRole('combobox', { name: `${index + 1}Pの順位` })
-      .selectOption(values[index])
+  for (const checkbox of await page.locator('.result-tie input').all())
+    await checkbox.uncheck()
+  const ordered = [0, 1, 2, 3].sort((first, second) => Number(values[first]) - Number(values[second]))
+  for (const [position, seat] of ordered.entries()) {
+    const current = await page.locator('.result-player').evaluateAll((cards) =>
+      cards.map((card) => Number(card.getAttribute('data-seat'))),
+    )
+    const index = current.indexOf(seat)
+    if (index === position) continue
+    const handle = page.getByRole('button', { name: `${seat + 1}Pを並べ替え`, exact: true })
+    await handle.focus()
+    await handle.press('Space')
+    for (let step = position; step < index; step++) await handle.press('ArrowLeft')
+    await handle.press('Space')
+  }
+  for (let position = 1; position < 4; position++)
+    await page.getByRole('checkbox', { name: `${ordered[position] + 1}Pを前の人と同率`, exact: true })
+      .setChecked(values[ordered[position]] === values[ordered[position - 1]])
 }
+
+async function expectResultAttributes(page: Page, attribute: string, values: string[]) {
+  await expect.poll(() => page.locator('.result-player').evaluateAll(
+    (cards, name) => cards.map((card) => card.getAttribute(name)), attribute,
+  )).toEqual(values)
+}
+
+test('ドラッグ順位・同率・取消・横並び表示', async ({ page }, testInfo) => {
+  await start(page)
+  const first = await page.getByRole('button', { name: '1Pを並べ替え', exact: true }).boundingBox()
+  const last = await page.getByRole('button', { name: '4Pを並べ替え', exact: true }).boundingBox()
+  expect(first).not.toBeNull()
+  expect(last).not.toBeNull()
+  const startX = first!.x + first!.width / 2
+  const endX = last!.x + last!.width / 2
+  const centerY = first!.y + first!.height / 2
+  if (testInfo.project.name !== 'desktop') {
+    const session = await page.context().newCDPSession(page)
+    await session.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: startX, y: centerY }] })
+    for (let step = 1; step <= 12; step++)
+      await session.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: startX + (endX - startX) * step / 12, y: centerY }] })
+    await session.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
+    await session.detach()
+  } else {
+    await page.mouse.move(startX, centerY)
+    await page.mouse.down()
+    await page.mouse.move(startX + 8, centerY)
+    await page.mouse.move(endX, centerY, { steps: 12 })
+    await page.mouse.up()
+  }
+  await expectResultAttributes(page, 'data-seat', ['1', '2', '3', '0'])
+  await page.getByRole('checkbox', { name: '3Pを前の人と同率', exact: true }).check()
+  const cards = page.locator('.result-player')
+  await expectResultAttributes(page, 'data-rank', ['1', '1', '3', '4'])
+  await expect(cards.locator('.result-points')).toHaveText(['3.5pt', '3.5pt', '2pt', '1pt'])
+  const boxes = await cards.evaluateAll((elements) => elements.map((element) => {
+    const box = element.getBoundingClientRect()
+    return { top: box.top, right: box.right }
+  }))
+  expect(Math.max(...boxes.map((box) => box.top)) - Math.min(...boxes.map((box) => box.top))).toBeLessThan(1)
+  expect(boxes.at(-1)!.right).toBeLessThanOrEqual(page.viewportSize()!.width)
+  const overflow = await cards.evaluateAll((elements) => elements.flatMap((element) => {
+    const card = element.getBoundingClientRect()
+    return [...element.querySelectorAll('button, .player-badge, label, strong')].filter((child) => {
+      const bounds = child.getBoundingClientRect()
+      return bounds.left < card.left - 1 || bounds.right > card.right + 1
+    }).map((child) => child.textContent)
+  }))
+  expect(overflow).toEqual([])
+  await page.screenshot({ path: testInfo.outputPath('drag-results.png'), fullPage: true })
+  await page.getByRole('button', { name: '結果を保存', exact: true }).click()
+  await page.getByRole('button', { name: '直前の入力を修正' }).click()
+  await expectResultAttributes(page, 'data-seat', ['1', '2', '3', '0'])
+  await expect(page.getByRole('checkbox', { name: '3Pを前の人と同率', exact: true })).toBeChecked()
+  const handle = page.getByRole('button', { name: '1Pを並べ替え', exact: true })
+  await handle.focus()
+  await handle.press('Space')
+  await handle.press('ArrowLeft')
+  await handle.press('Escape')
+  await expectResultAttributes(page, 'data-seat', ['1', '2', '3', '0'])
+  const saved = await page.evaluate((cacheKey) => JSON.parse(localStorage.getItem(cacheKey)!), key)
+  expect(saved.rounds[0].results[0].ranks).toEqual([4, 1, 1, 3])
+})
 
 test('参加者リンクから入力し直前の入力を修正できる', async ({ page }) => {
   await start(page)
@@ -33,7 +110,7 @@ test('参加者リンクから入力し直前の入力を修正できる', async
   await expect(page.getByRole('combobox', { name: '入力する対戦' })).toHaveValue('round-2')
   await page.getByRole('button', { name: '直前の入力を修正' }).click()
   await expect(page.getByRole('combobox', { name: '入力する対戦' })).toHaveValue('round-1')
-  await expect(page.getByRole('combobox', { name: '1Pの順位' })).toHaveValue('1')
+  await expect(page.locator('.result-player[data-seat="0"]')).toHaveAttribute('data-rank', '1')
   await ranks(page, ['4', '3', '2', '1'])
   await page.getByRole('button', { name: '結果を訂正', exact: true }).click()
   const event = await page.evaluate(
@@ -232,12 +309,8 @@ test('設定保存・結果入力・再読み込み・順位更新', async ({ pa
 
 test('同着の入力検証・訂正・取消', async ({ page }) => {
   await start(page)
-  await ranks(page, ['1', '1', '2', '3'])
-  await expect(
-    page.getByRole('button', { name: '結果を保存', exact: true }),
-  ).toBeDisabled()
-  await expect(page.getByRole('alert')).toContainText('同着の次の順位')
   await ranks(page, ['1', '1', '3', '4'])
+  await expectResultAttributes(page, 'data-rank', ['1', '1', '3', '4'])
   await page.getByRole('button', { name: '結果を保存', exact: true }).click()
   await page
     .getByRole('combobox', { name: '入力する対戦' })
